@@ -124,18 +124,41 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
 
     // Compose's own arrow-key search never steps *into* the item that currently holds focus,
     // so a focused page or scrolling area would trap the keyboard. Step into containers here.
+    fun describe(rect: Rect?): String =
+        rect?.let { "${it.left.toInt()},${it.top.toInt()} ${it.width.toInt()}x${it.height.toInt()}" } ?: "none"
+
     fun moveWithArrows(direction: FocusDirection): Boolean {
-        val startedInContainer = isContainer(currentRect())
+        val before = currentRect()
+        val startedInContainer = isContainer(before)
         var entered = 0
+        var how = "none"
         var moved = false
         if (startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
             moved = true
             entered++
+            how = "enter"
         }
-        if (!moved) moved = focusManager.moveFocus(direction)
+        if (!moved && focusManager.moveFocus(direction)) {
+            moved = true
+            how = "arrow"
+        }
         if (!moved && !startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
             moved = true
             entered++
+            how = "enter-child"
+        }
+        val forward = direction == FocusDirection.Down || direction == FocusDirection.Right
+        if (!moved && forward) {
+            // A page that fills the window is never "below" or "to the right of" a button
+            // floating on top of it, so the arrow search cannot reach it. Start again from
+            // the top of the window and step into the page.
+            focusManager.clearFocus(force = true)
+            runCatching { hostState.node?.requestFocus() }
+            if (focusManager.moveFocus(FocusDirection.Enter)) {
+                moved = true
+                entered++
+                how = "restart"
+            }
         }
         var guard = 0
         while (moved && guard < 3 && isContainer(currentRect())) {
@@ -143,21 +166,21 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             entered++
             guard++
         }
-        debugLine = "dir=$direction moved=$moved entered=$entered startContainer=$startedInContainer"
+        if (moved && how == "restart" && currentRect() == before) {
+            // Restarting landed on the same item: fall back to tab order instead.
+            moved = focusManager.moveFocus(FocusDirection.Next)
+            how = "restart-same-then-next"
+        }
+        if (!moved) {
+            val oneDimensional = if (forward) FocusDirection.Next else FocusDirection.Previous
+            if (focusManager.moveFocus(oneDimensional)) {
+                moved = true
+                how = "tab-order"
+            }
+        }
+        debugLine = "dir=$direction how=$how moved=$moved entered=$entered " +
+            "from=${describe(before)} to=${describe(currentRect())}"
         return moved
-    }
-
-    // Follow the focused item while the keyboard is in use (it moves when lists scroll).
-    LaunchedEffect(keyboardMode) {
-        if (!keyboardMode) {
-            focusedRect = null
-            return@LaunchedEffect
-        }
-        while (true) {
-            val rect = runCatching { hostState.node?.getFocusedRect() }.getOrNull()
-            if (rect != focusedRect) focusedRect = rect
-            delay(KeyboardNavigationConfig.RING_REFRESH_MS)
-        }
     }
 
     Box(
@@ -269,7 +292,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             Text(
                 text = "keyboard nav | hostHasFocus=${hostState.hasFocus} hostSelf=${hostState.selfFocused} " +
                     "keyboardMode=$keyboardMode\n" +
-                    "focused=${rect?.let { "${it.left.toInt()},${it.top.toInt()} ${it.width.toInt()}x${it.height.toInt()}" } ?: "none"} " +
+                    "focused=${describe(rect)} " +
                     "window=${hostSize.width}x${hostSize.height}\n" +
                     debugLine,
                 color = Color.White,
