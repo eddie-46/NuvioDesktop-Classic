@@ -1,26 +1,23 @@
 package com.nuvio.app.core.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.onFocusedBoundsChanged
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusTargetModifierNode
+import androidx.compose.ui.focus.Focusability
+import androidx.compose.ui.focus.getFocusedRect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
@@ -35,8 +32,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.node.DelegatingNode
+import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.isDesktop
@@ -68,9 +65,11 @@ internal object KeyboardNavigationConfig {
 
     const val RING_WIDTH_DP = 3
     const val RING_RADIUS_DP = 8
+
+    /** How often (ms) the ring position is refreshed while the keyboard is in use. */
+    const val RING_REFRESH_MS = 16L
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     if (!isDesktop || !KeyboardNavigationConfig.ENABLED) {
@@ -79,32 +78,38 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     }
 
     val focusManager = LocalFocusManager.current
-    val hostFocus = remember { FocusRequester() }
+    val hostState = remember { KeyboardFocusHostState() }
     var keyboardMode by remember { mutableStateOf(false) }
-    var needsHostFocus by remember { mutableStateOf(true) }
-    var hostCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var focusedCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var focusTick by remember { mutableIntStateOf(0) }
+    var focusedRect by remember { mutableStateOf<Rect?>(null) }
     val ringColor = MaterialTheme.colorScheme.onBackground
 
-    LaunchedEffect(needsHostFocus) {
-        if (!needsHostFocus) return@LaunchedEffect
-        // The host may not be laid out yet on the first pass, so retry briefly.
+    // Keep focus on the host whenever nothing else holds it, so the first arrow press
+    // always has somewhere to start from.
+    LaunchedEffect(hostState.hasFocus) {
+        if (hostState.hasFocus) return@LaunchedEffect
         repeat(10) {
-            if (runCatching { hostFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            val focused = runCatching { hostState.node?.requestFocus() }.getOrNull() == true
+            if (focused) return@LaunchedEffect
             delay(100)
+        }
+    }
+
+    // Follow the focused item while the keyboard is in use (it moves when lists scroll).
+    LaunchedEffect(keyboardMode) {
+        if (!keyboardMode) {
+            focusedRect = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            val rect = runCatching { hostState.node?.getFocusedRect() }.getOrNull()
+            if (rect != focusedRect) focusedRect = rect
+            delay(KeyboardNavigationConfig.RING_REFRESH_MS)
         }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onGloballyPositioned { hostCoordinates = it }
-            .onFocusChanged { needsHostFocus = !it.hasFocus }
-            .onFocusedBoundsChanged { coordinates ->
-                focusedCoordinates = coordinates
-                focusTick++
-            }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key.isNavigationKey()) {
                     keyboardMode = true
@@ -124,8 +129,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 } ?: return@onKeyEvent false
                 focusManager.moveFocus(direction)
             }
-            .focusRequester(hostFocus)
-            .focusable()
+            .then(KeyboardFocusHostElement(hostState))
             .pointerInput(Unit) {
                 var lastPosition: Offset? = null
                 awaitPointerEventScope {
@@ -150,43 +154,83 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                         if (position != null) lastPosition = position
                     }
                 }
-            }
-            .drawWithContent {
-                drawContent()
-                // Reading the tick redraws the ring when the focused item moves (e.g. scrolling).
-                @Suppress("UNUSED_VARIABLE")
-                val tick = focusTick
-                if (!KeyboardNavigationConfig.SHOW_FOCUS_RING || !keyboardMode) return@drawWithContent
-                val host = hostCoordinates?.takeIf { it.isAttached } ?: return@drawWithContent
-                val target = focusedCoordinates?.takeIf { it.isAttached } ?: return@drawWithContent
-                val bounds = runCatching { host.localBoundingBoxOf(target, clipBounds = false) }
-                    .getOrNull() ?: return@drawWithContent
-                if (bounds.isEmpty) return@drawWithContent
-                // The host itself holding focus is not something to outline.
-                if (bounds.width >= size.width * 0.95f && bounds.height >= size.height * 0.95f) {
-                    return@drawWithContent
-                }
-                val ringWidth = KeyboardNavigationConfig.RING_WIDTH_DP.dp.toPx()
-                val radius = CornerRadius(KeyboardNavigationConfig.RING_RADIUS_DP.dp.toPx())
-                val outer = bounds.inflate(ringWidth * 1.5f)
-                val inner = bounds.inflate(ringWidth * 0.5f)
-                drawRoundRect(
-                    color = Color.Black.copy(alpha = 0.55f),
-                    topLeft = outer.topLeft,
-                    size = outer.size,
-                    cornerRadius = radius,
-                    style = Stroke(width = ringWidth),
-                )
-                drawRoundRect(
-                    color = ringColor,
-                    topLeft = inner.topLeft,
-                    size = inner.size,
-                    cornerRadius = radius,
-                    style = Stroke(width = ringWidth),
-                )
             },
     ) {
         content()
+        if (KeyboardNavigationConfig.SHOW_FOCUS_RING && keyboardMode) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .drawBehind {
+                        val bounds = focusedRect ?: return@drawBehind
+                        if (bounds.isEmpty) return@drawBehind
+                        // The host itself holding focus is not something to outline.
+                        if (bounds.width >= size.width * 0.95f && bounds.height >= size.height * 0.95f) {
+                            return@drawBehind
+                        }
+                        val ringWidth = KeyboardNavigationConfig.RING_WIDTH_DP.dp.toPx()
+                        val radius = CornerRadius(KeyboardNavigationConfig.RING_RADIUS_DP.dp.toPx())
+                        val outer = bounds.inflate(ringWidth * 1.5f)
+                        val inner = bounds.inflate(ringWidth * 0.5f)
+                        drawRoundRect(
+                            color = Color.Black.copy(alpha = 0.55f),
+                            topLeft = outer.topLeft,
+                            size = outer.size,
+                            cornerRadius = radius,
+                            style = Stroke(width = ringWidth),
+                        )
+                        drawRoundRect(
+                            color = ringColor,
+                            topLeft = inner.topLeft,
+                            size = inner.size,
+                            cornerRadius = radius,
+                            style = Stroke(width = ringWidth),
+                        )
+                    },
+            )
+        }
+    }
+}
+
+private class KeyboardFocusHostState {
+    var hasFocus by mutableStateOf(false)
+    var node: FocusTargetModifierNode? = null
+}
+
+private data class KeyboardFocusHostElement(
+    val state: KeyboardFocusHostState,
+) : ModifierNodeElement<KeyboardFocusHostNode>() {
+    override fun create(): KeyboardFocusHostNode = KeyboardFocusHostNode(state)
+
+    override fun update(node: KeyboardFocusHostNode) {
+        node.updateState(state)
+    }
+}
+
+private class KeyboardFocusHostNode(
+    private var state: KeyboardFocusHostState,
+) : DelegatingNode() {
+    private val focusTarget = delegate(
+        FocusTargetModifierNode(
+            focusability = Focusability.Always,
+            onFocusChange = { _, current -> state.hasFocus = current.hasFocus },
+        ),
+    )
+
+    override fun onAttach() {
+        state.node = focusTarget
+    }
+
+    override fun onDetach() {
+        if (state.node === focusTarget) state.node = null
+        state.hasFocus = false
+    }
+
+    fun updateState(newState: KeyboardFocusHostState) {
+        if (newState === state) return
+        if (state.node === focusTarget) state.node = null
+        state = newState
+        if (isAttached) state.node = focusTarget
     }
 }
 
