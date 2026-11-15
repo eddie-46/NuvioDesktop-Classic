@@ -136,10 +136,19 @@ object NetworkStatusRepository {
             return NetworkCondition.NoInternet
         }
 
-        val supabaseReachable = SupabaseEndpointConfig.restEndpointUrls().any { url ->
+        // Classic fork: a build without the Nuvio account backend has no server to reach.
+        // Without this, such a build reports "servers unreachable" forever, and features that
+        // pause while offline (skip-intro lookups among them) never run.
+        val backendUrls = SupabaseEndpointConfig.restEndpointUrls().filter { it.startsWith("http") }
+        val publishableKey = ServerConfigurationRepository.active.value.publishableKey
+        if (backendUrls.isEmpty() || publishableKey.isBlank()) {
+            return NetworkCondition.Online
+        }
+
+        val supabaseReachable = backendUrls.any { url ->
             probeReachable(
                 url = url,
-                headers = mapOf("apikey" to ServerConfigurationRepository.active.value.publishableKey),
+                headers = mapOf("apikey" to publishableKey),
             )
         }
         if (!supabaseReachable) {
