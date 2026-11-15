@@ -53,6 +53,7 @@ import androidx.navigation3.ui.NavDisplay
 import androidx.navigationevent.DirectNavigationEventInput
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import com.nuvio.app.core.ui.ClassicInlineSources
+import com.nuvio.app.core.ui.ClassicLayoutConfig
 import com.nuvio.app.core.ui.LocalPosterClickAnchor
 import com.nuvio.app.core.ui.LocalVerticalBarPadding
 import com.nuvio.app.navigation.PosterNavigationState
@@ -1276,7 +1277,11 @@ internal fun MainAppContent(
         val onContinueWatchingClick: (ContinueWatchingItem) -> Unit = { item ->
             if (
                 !item.isCloudLibraryContinueWatchingItem() &&
-                continueWatchingPreferencesUiState.clickAction.opensDetails(item)
+                (
+                    // Classic fork: with sources shown on the details page, go there directly.
+                    (ClassicInlineSources.enabled && ClassicLayoutConfig.CONTINUE_WATCHING_OPENS_DETAILS) ||
+                        continueWatchingPreferencesUiState.clickAction.opensDetails(item)
+                    )
             ) {
                 navController.navigate(
                     DetailRoute(

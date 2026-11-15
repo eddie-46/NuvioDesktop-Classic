@@ -4,6 +4,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Rect
 import com.nuvio.app.isDesktop
 import com.nuvio.app.navigation.AppRoute
 
@@ -26,6 +27,9 @@ internal object ClassicInlineSources {
 
     var request: ClassicInlineSourcesRequest? by mutableStateOf(null)
         private set
+
+    /** Where the panel sits in the window, while it is showing. Used by keyboard navigation. */
+    var panelBounds: Rect? by mutableStateOf(null)
 
     val enabled: Boolean
         get() = isDesktop && ClassicLayoutConfig.INLINE_SOURCES_ENABLED
@@ -51,6 +55,11 @@ internal object ClassicInlineSources {
 
     fun close(route: AppRoute) {
         if (request?.host == route) request = null
+    }
+
+    /** Closes whichever panel is open. */
+    fun closeActive() {
+        request = null
     }
 }
 

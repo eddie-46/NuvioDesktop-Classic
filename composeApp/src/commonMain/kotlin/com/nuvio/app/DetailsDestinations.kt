@@ -17,6 +17,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.ClassicInlineSources
@@ -171,8 +173,12 @@ internal fun DetailsDestination(
             modifier = Modifier
                 .width(inlinePanelWidth)
                 .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .onGloballyPositioned { ClassicInlineSources.panelBounds = it.boundsInWindow() },
         ) {
+            DisposableEffect(Unit) {
+                onDispose { ClassicInlineSources.panelBounds = null }
+            }
             CompositionLocalProvider(
                 LocalClassicInlineSourcesClose provides { ClassicInlineSources.close(route) },
             ) {

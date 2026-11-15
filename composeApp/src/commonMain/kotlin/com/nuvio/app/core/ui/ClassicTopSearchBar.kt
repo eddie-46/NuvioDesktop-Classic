@@ -51,6 +51,15 @@ internal object ClassicLayoutConfig {
     const val INLINE_SOURCES_WIDTH_FRACTION = 0.38f
     const val INLINE_SOURCES_MIN_WIDTH_DP = 420
     const val INLINE_SOURCES_MAX_WIDTH_DP = 640
+
+    /** When the sources panel opens from the keyboard, move the selector into it. */
+    const val INLINE_SOURCES_TAKE_FOCUS = true
+
+    /** Left presses at the panel's left edge needed to close it and return to the page. */
+    const val INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE = 2
+
+    /** Selecting a Continue Watching item opens its details page instead of the sources page. */
+    const val CONTINUE_WATCHING_OPENS_DETAILS = true
 }
 
 /** Height the bar occupies, for screens that need to start their content below it. */

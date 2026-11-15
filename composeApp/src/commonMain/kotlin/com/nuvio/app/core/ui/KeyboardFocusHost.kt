@@ -161,15 +161,25 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     // a list that reloads), the next arrow press carries on from here instead of starting over.
     val lastLanding = remember { LastLanding() }
 
-    fun searchAndMove(direction: FocusDirection, allowScroll: Boolean): SemanticsMoveOutcome {
+    // Sources panel on the details page: where to return to when it closes, and how many
+    // times Left has been pressed at its edge.
+    val panelFocus = remember { PanelFocusState() }
+
+    fun hostFocusedRect(): Rect? = if (hostState.selfFocused) {
+        null
+    } else {
+        runCatching { hostState.node?.getFocusedRect() }.getOrNull()
+    }
+
+    fun searchAndMove(
+        direction: FocusDirection,
+        allowScroll: Boolean,
+        within: Rect? = null,
+    ): SemanticsMoveOutcome {
         val windowArea = hostSize.width.toFloat() * hostSize.height.toFloat()
         // Some items (text boxes inside a wrapper, for one) do not report themselves as focused
         // in the semantics tree, so the focused box known to the host is the fallback origin.
-        val hostFocusedRect = if (hostState.selfFocused) {
-            null
-        } else {
-            runCatching { hostState.node?.getFocusedRect() }.getOrNull()
-        }
+        val hostFocusedRect = hostFocusedRect()
         val outcome = runCatching {
             moveFocusBySemantics(
                 owners = semanticsOwners(),
@@ -178,6 +188,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 fallbackSource = hostFocusedRect,
                 rememberedSource = lastLanding.rect,
                 allowScroll = allowScroll,
+                within = within,
             )
         }.getOrElse { error ->
             SemanticsMoveOutcome(moved = false, how = "error:${error::class.simpleName}")
@@ -192,6 +203,46 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
 
     fun moveWithArrows(direction: FocusDirection): Boolean {
         retryHolder.job?.cancel()
+        panelFocus.userMoved = true
+
+        // Inside the sources panel the arrows stay in the panel; Left at its edge, pressed
+        // twice, closes it and hands the selector back to the page.
+        val panel = ClassicInlineSources.panelBounds.takeIf { ClassicInlineSources.request != null }
+        val focusedNow = hostFocusedRect()
+        if (panel != null && focusedNow != null && panel.contains(focusedNow.center)) {
+            val inside = searchAndMove(
+                direction = direction,
+                allowScroll = KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS,
+                within = panel,
+            )
+            if (inside.moved) {
+                panelFocus.leftEdgePresses = 0
+                debugLine = describeOutcome(direction, inside, "panel-${inside.how}", true)
+                if (inside.scrolled) {
+                    retryHolder.job = scope.launch {
+                        delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
+                        searchAndMove(direction, allowScroll = false, within = panel)
+                    }
+                }
+                return true
+            }
+            if (direction == FocusDirection.Left) {
+                panelFocus.leftEdgePresses++
+                if (panelFocus.leftEdgePresses >= ClassicLayoutConfig.INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE) {
+                    panelFocus.leftEdgePresses = 0
+                    ClassicInlineSources.closeActive()
+                    debugLine = "dir=Left closed the sources panel"
+                } else {
+                    debugLine = "dir=Left at the panel edge: press again to close sources"
+                }
+            } else {
+                panelFocus.leftEdgePresses = 0
+                debugLine = describeOutcome(direction, inside, "panel-edge", false)
+            }
+            return true
+        }
+        panelFocus.leftEdgePresses = 0
+
         val outcome = searchAndMove(direction, allowScroll = KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS)
         var moved = outcome.moved
         var how = outcome.how
@@ -209,6 +260,41 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             }
         }
         return moved
+    }
+
+    // Move the selector into the sources panel when it opens, and back when it closes.
+    val inlineLaunchId = ClassicInlineSources.request?.launchId
+    LaunchedEffect(inlineLaunchId) {
+        if (!ClassicLayoutConfig.INLINE_SOURCES_TAKE_FOCUS) return@LaunchedEffect
+        if (inlineLaunchId == null) {
+            panelFocus.leftEdgePresses = 0
+            val back = panelFocus.returnRect ?: return@LaunchedEffect
+            panelFocus.returnRect = null
+            if (!keyboardMode) return@LaunchedEffect
+            // Let the page settle back to full width before looking for the item.
+            delay(180)
+            runCatching { focusNearestTo(semanticsOwners(), back) }
+            return@LaunchedEffect
+        }
+
+        val current = hostFocusedRect()
+        val knownPanel = ClassicInlineSources.panelBounds
+        if (current != null && (knownPanel == null || !knownPanel.contains(current.center))) {
+            panelFocus.returnRect = current
+        }
+        if (!keyboardMode) return@LaunchedEffect
+        panelFocus.userMoved = false
+        // Sources arrive over a few seconds: step into the panel straight away, then move
+        // onto the first source once one is listed. Stop as soon as the user takes over.
+        repeat(40) {
+            delay(200)
+            if (panelFocus.userMoved) return@LaunchedEffect
+            val bounds = ClassicInlineSources.panelBounds ?: return@repeat
+            val reachedSource = runCatching {
+                focusFirstInside(semanticsOwners(), bounds, hostFocusedRect())
+            }.getOrDefault(false)
+            if (reachedSource) return@LaunchedEffect
+        }
     }
 
     fun arrowDirection(key: Key): FocusDirection? = when (key) {
@@ -342,6 +428,63 @@ private class LastLanding {
     var rect: Rect? = null
 }
 
+private class PanelFocusState {
+    /** The item that had the selector when the sources panel opened. */
+    var returnRect: Rect? = null
+    var leftEdgePresses: Int = 0
+    /** Set on any arrow press, so automatic focus moves stop once the user takes over. */
+    var userMoved: Boolean = false
+}
+
+/** Every focusable item on screen in the top-most layer, as (node, visible box). */
+private fun visibleFocusTargets(owners: Collection<SemanticsOwner>): List<Pair<SemanticsNode, Rect>> {
+    val found = ArrayList<Triple<Int, SemanticsNode, Rect>>()
+    owners.forEachIndexed { layer, owner ->
+        owner.getAllSemanticsNodes(mergingEnabled = true).forEach { node ->
+            val config = node.config
+            if (config.getOrNull(SemanticsProperties.Focused) == null) return@forEach
+            if (config.contains(SemanticsProperties.Disabled)) return@forEach
+            if (config.getOrNull(SemanticsActions.RequestFocus)?.action == null) return@forEach
+            val bounds = node.boundsInWindow
+            if (bounds.width < 2f || bounds.height < 2f) return@forEach
+            found += Triple(layer, node, bounds)
+        }
+    }
+    val top = found.maxOfOrNull { it.first } ?: return emptyList()
+    return found.filter { it.first == top }.map { it.second to it.third }
+}
+
+private fun requestFocusOn(node: SemanticsNode): Boolean =
+    node.config.getOrNull(SemanticsActions.RequestFocus)?.action?.invoke() == true
+
+/**
+ * Puts the selector on the first source row in [panel] (rows span most of its width). Until a
+ * row exists, it parks the selector on the panel's first control so it is at least inside.
+ * Returns true once a source row has the selector.
+ */
+private fun focusFirstInside(owners: Collection<SemanticsOwner>, panel: Rect, focusedNow: Rect?): Boolean {
+    val inside = visibleFocusTargets(owners).filter { panel.contains(it.second.center) }
+    if (inside.isEmpty()) return false
+    val rows = inside.filter { it.second.width >= panel.width * 0.6f }.sortedBy { it.second.top }
+    val firstRow = rows.firstOrNull()
+    if (firstRow != null) {
+        return requestFocusOn(firstRow.first)
+    }
+    val alreadyInside = focusedNow != null && panel.contains(focusedNow.center)
+    if (!alreadyInside) {
+        inside.minByOrNull { it.second.top + it.second.left }?.let { requestFocusOn(it.first) }
+    }
+    return false
+}
+
+/** Puts the selector on the item whose centre is closest to where [box] was. */
+private fun focusNearestTo(owners: Collection<SemanticsOwner>, box: Rect): Boolean {
+    val target = visibleFocusTargets(owners).minByOrNull { (_, bounds) ->
+        (bounds.center - box.center).getDistance()
+    } ?: return false
+    return requestFocusOn(target.first)
+}
+
 private class SemanticsMoveOutcome(
     val moved: Boolean,
     val how: String,
@@ -375,6 +518,7 @@ private fun moveFocusBySemantics(
     fallbackSource: Rect?,
     rememberedSource: Rect?,
     allowScroll: Boolean,
+    within: Rect? = null,
 ): SemanticsMoveOutcome {
     if (owners.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-semantics")
 
@@ -418,6 +562,7 @@ private fun moveFocusBySemantics(
             target.bounds.width >= 2f && target.bounds.height >= 2f &&
             // A wrapper drawn exactly where the focused item is counts as the same item.
             (source == null || !sameBox(source, target.fullBounds)) &&
+            (within == null || within.contains(target.bounds.center)) &&
             (windowArea <= 0f ||
                 target.bounds.width * target.bounds.height <=
                 windowArea * KeyboardNavigationConfig.MAX_TARGET_AREA_FRACTION)
@@ -454,7 +599,9 @@ private fun moveFocusBySemantics(
     }
 
     if (liveSource != null && allowScroll) {
-        val areas = scrollAreas.filter { it.layer == activeLayer }
+        val areas = scrollAreas.filter {
+            it.layer == activeLayer && (within == null || within.contains(it.bounds.center))
+        }
         if (scrollTowards(areas, liveSource, direction)) {
             return SemanticsMoveOutcome(
                 moved = true,
