@@ -12,8 +12,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
@@ -41,11 +41,18 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.node.DelegatingNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsOwner
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.app.isDesktop
 import kotlinx.coroutines.delay
+import kotlin.math.max
 
 /**
  * Classic fork: keyboard / remote navigation for the desktop app.
@@ -55,8 +62,10 @@ import kotlinx.coroutines.delay
  * - A focus ring is drawn around the focused item, but only while the keyboard is being used;
  *   moving the mouse or touchpad hides it again so mouse users see no change.
  *
- * The host keeps focus on itself whenever nothing else is focused, so the first arrow press
- * always has somewhere to start from.
+ * Compose's built-in arrow-key search cannot reach items inside a scrolling page from a button
+ * floating on top of that page, so the search is done here instead: every focusable item on
+ * screen is read from the window's semantics tree and the nearest one in the pressed direction
+ * is focused.
  */
 internal object KeyboardNavigationConfig {
     /** Master switch for the whole feature. */
@@ -68,6 +77,18 @@ internal object KeyboardNavigationConfig {
     /** Arrow keys move focus. Tab / Shift+Tab always work regardless. */
     const val ARROW_KEYS_MOVE_FOCUS = true
 
+    /** When nothing lies in the pressed direction, scroll the surrounding list instead. */
+    const val SCROLL_WHEN_NOTHING_TO_FOCUS = true
+
+    /** Share of the surrounding list scrolled by one arrow press in that case. */
+    const val SCROLL_STEP_FRACTION = 0.6f
+
+    /** Items covering more than this share of the window are page backgrounds, not targets. */
+    const val MAX_TARGET_AREA_FRACTION = 0.6f
+
+    /** How much sideways distance counts against a target compared with forward distance. */
+    const val SIDEWAYS_DISTANCE_WEIGHT = 2f
+
     /** Pointer travel (px) that switches back from keyboard mode to mouse mode. */
     const val POINTER_MOVE_THRESHOLD_PX = 4f
 
@@ -77,17 +98,17 @@ internal object KeyboardNavigationConfig {
     /** How often (ms) the ring position is refreshed while the keyboard is in use. */
     const val RING_REFRESH_MS = 16L
 
-    /**
-     * A focused item covering more than this share of the window is treated as a container
-     * (a page or a scrolling area), and arrows step into it instead of past it.
-     */
-    const val CONTAINER_AREA_FRACTION = 0.25f
-
     /** F9 shows a small on-screen readout of what the keyboard navigation is doing. */
     const val DEBUG_OVERLAY_KEY_ENABLED = true
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+/**
+ * Supplies the semantics trees of the window hosting the app (main content first, pop-ups and
+ * dialogs after it). Provided by the desktop entry point; empty elsewhere.
+ */
+internal val LocalKeyboardSemanticsOwners =
+    staticCompositionLocalOf<() -> Collection<SemanticsOwner>> { { emptyList() } }
+
 @Composable
 internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     if (!isDesktop || !KeyboardNavigationConfig.ENABLED) {
@@ -96,6 +117,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     }
 
     val focusManager = LocalFocusManager.current
+    val semanticsOwners = LocalKeyboardSemanticsOwners.current
     val hostState = remember { KeyboardFocusHostState() }
     var keyboardMode by remember { mutableStateOf(false) }
     var focusedRect by remember { mutableStateOf<Rect?>(null) }
@@ -104,8 +126,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     var debugLine by remember { mutableStateOf("no arrow key seen yet") }
     val ringColor = MaterialTheme.colorScheme.onBackground
 
-    // Keep focus on the host whenever nothing else holds it, so the first arrow press
-    // always has somewhere to start from.
+    // Keep focus on the host whenever nothing else holds it, so key presses always arrive here.
     LaunchedEffect(hostState.hasFocus) {
         while (!hostState.hasFocus) {
             runCatching { hostState.node?.requestFocus() }
@@ -113,74 +134,47 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         }
     }
 
-    fun currentRect(): Rect? = runCatching { hostState.node?.getFocusedRect() }.getOrNull()
-
-    fun isContainer(rect: Rect?): Boolean {
-        if (hostState.selfFocused) return true
-        val hostArea = hostSize.width.toFloat() * hostSize.height.toFloat()
-        if (rect == null || hostArea <= 0f) return false
-        return rect.width * rect.height > hostArea * KeyboardNavigationConfig.CONTAINER_AREA_FRACTION
+    // Follow the focused item while the keyboard is in use (it moves when lists scroll).
+    LaunchedEffect(keyboardMode) {
+        if (!keyboardMode) {
+            focusedRect = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            val rect = runCatching { hostState.node?.getFocusedRect() }.getOrNull()
+            if (rect != focusedRect) focusedRect = rect
+            delay(KeyboardNavigationConfig.RING_REFRESH_MS)
+        }
     }
 
-    // Compose's own arrow-key search never steps *into* the item that currently holds focus,
-    // so a focused page or scrolling area would trap the keyboard. Step into containers here.
-    fun describe(rect: Rect?): String =
-        rect?.let { "${it.left.toInt()},${it.top.toInt()} ${it.width.toInt()}x${it.height.toInt()}" } ?: "none"
-
     fun moveWithArrows(direction: FocusDirection): Boolean {
-        val before = currentRect()
-        val startedInContainer = isContainer(before)
-        var entered = 0
-        var how = "none"
-        var moved = false
-        if (startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
-            moved = true
-            entered++
-            how = "enter"
+        val windowArea = hostSize.width.toFloat() * hostSize.height.toFloat()
+        val outcome = runCatching {
+            moveFocusBySemantics(
+                owners = semanticsOwners(),
+                direction = direction,
+                windowArea = windowArea,
+            )
+        }.getOrElse { error ->
+            SemanticsMoveOutcome(moved = false, how = "error:${error::class.simpleName}")
         }
+        var moved = outcome.moved
+        var how = outcome.how
         if (!moved && focusManager.moveFocus(direction)) {
             moved = true
-            how = "arrow"
+            how += "+compose"
         }
-        if (!moved && !startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
-            moved = true
-            entered++
-            how = "enter-child"
-        }
-        val forward = direction == FocusDirection.Down || direction == FocusDirection.Right
-        if (!moved && forward) {
-            // A page that fills the window is never "below" or "to the right of" a button
-            // floating on top of it, so the arrow search cannot reach it. Start again from
-            // the top of the window and step into the page.
-            focusManager.clearFocus(force = true)
-            runCatching { hostState.node?.requestFocus() }
-            if (focusManager.moveFocus(FocusDirection.Enter)) {
-                moved = true
-                entered++
-                how = "restart"
-            }
-        }
-        var guard = 0
-        while (moved && guard < 3 && isContainer(currentRect())) {
-            if (!focusManager.moveFocus(FocusDirection.Enter)) break
-            entered++
-            guard++
-        }
-        if (moved && how == "restart" && currentRect() == before) {
-            // Restarting landed on the same item: fall back to tab order instead.
-            moved = focusManager.moveFocus(FocusDirection.Next)
-            how = "restart-same-then-next"
-        }
-        if (!moved) {
-            val oneDimensional = if (forward) FocusDirection.Next else FocusDirection.Previous
-            if (focusManager.moveFocus(oneDimensional)) {
-                moved = true
-                how = "tab-order"
-            }
-        }
-        debugLine = "dir=$direction how=$how moved=$moved entered=$entered " +
-            "from=${describe(before)} to=${describe(currentRect())}"
+        debugLine = "dir=$direction how=$how moved=$moved targets=${outcome.targets} " +
+            "layers=${outcome.layers} from=${describeRect(outcome.from)} to=${describeRect(outcome.to)}"
         return moved
+    }
+
+    fun arrowDirection(key: Key): FocusDirection? = when (key) {
+        Key.DirectionUp -> FocusDirection.Up
+        Key.DirectionDown -> FocusDirection.Down
+        Key.DirectionLeft -> FocusDirection.Left
+        Key.DirectionRight -> FocusDirection.Right
+        else -> null
     }
 
     Box(
@@ -188,27 +182,20 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             .fillMaxSize()
             .onSizeChanged { hostSize = it }
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key.isNavigationKey()) {
-                    keyboardMode = true
-                }
-                if (KeyboardNavigationConfig.DEBUG_OVERLAY_KEY_ENABLED &&
-                    event.type == KeyEventType.KeyDown && event.key == Key.F9
-                ) {
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (event.key.isNavigationKey()) keyboardMode = true
+                if (KeyboardNavigationConfig.DEBUG_OVERLAY_KEY_ENABLED && event.key == Key.F9) {
                     debugVisible = !debugVisible
                     return@onPreviewKeyEvent true
                 }
                 // Text fields swallow Up/Down for the cursor, which would trap focus inside
                 // them. Take those two before the field sees them; Left/Right stay with the field.
                 if (KeyboardNavigationConfig.ARROW_KEYS_MOVE_FOCUS &&
-                    event.type == KeyEventType.KeyDown &&
-                    !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+                    !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed &&
+                    (event.key == Key.DirectionUp || event.key == Key.DirectionDown)
                 ) {
-                    val vertical = when (event.key) {
-                        Key.DirectionUp -> FocusDirection.Up
-                        Key.DirectionDown -> FocusDirection.Down
-                        else -> null
-                    }
-                    if (vertical != null && moveWithArrows(vertical)) {
+                    val direction = arrowDirection(event.key)
+                    if (direction != null && moveWithArrows(direction)) {
                         return@onPreviewKeyEvent true
                     }
                 }
@@ -218,13 +205,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 if (!KeyboardNavigationConfig.ARROW_KEYS_MOVE_FOCUS) return@onKeyEvent false
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 if (event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) return@onKeyEvent false
-                val direction = when (event.key) {
-                    Key.DirectionUp -> FocusDirection.Up
-                    Key.DirectionDown -> FocusDirection.Down
-                    Key.DirectionLeft -> FocusDirection.Left
-                    Key.DirectionRight -> FocusDirection.Right
-                    else -> null
-                } ?: return@onKeyEvent false
+                val direction = arrowDirection(event.key) ?: return@onKeyEvent false
                 moveWithArrows(direction)
             }
             .then(KeyboardFocusHostElement(hostState))
@@ -288,12 +269,10 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             )
         }
         if (debugVisible) {
-            val rect = focusedRect
             Text(
                 text = "keyboard nav | hostHasFocus=${hostState.hasFocus} hostSelf=${hostState.selfFocused} " +
                     "keyboardMode=$keyboardMode\n" +
-                    "focused=${describe(rect)} " +
-                    "window=${hostSize.width}x${hostSize.height}\n" +
+                    "ring=${describeRect(focusedRect)} window=${hostSize.width}x${hostSize.height}\n" +
                     debugLine,
                 color = Color.White,
                 fontSize = 13.sp,
@@ -306,6 +285,172 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Arrow-key search over the semantics tree
+// ---------------------------------------------------------------------------------------------
+
+private class SemanticsMoveOutcome(
+    val moved: Boolean,
+    val how: String,
+    val targets: Int = 0,
+    val layers: Int = 0,
+    val from: Rect? = null,
+    val to: Rect? = null,
+)
+
+private class FocusTarget(
+    val node: SemanticsNode,
+    val bounds: Rect,
+    val layer: Int,
+    val focused: Boolean,
+)
+
+private fun moveFocusBySemantics(
+    owners: Collection<SemanticsOwner>,
+    direction: FocusDirection,
+    windowArea: Float,
+): SemanticsMoveOutcome {
+    if (owners.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-semantics")
+
+    val all = ArrayList<FocusTarget>()
+    owners.forEachIndexed { layer, owner ->
+        owner.getAllSemanticsNodes(mergingEnabled = true).forEach { node ->
+            val config = node.config
+            val focused = config.getOrNull(SemanticsProperties.Focused) ?: return@forEach
+            if (config.contains(SemanticsProperties.Disabled)) return@forEach
+            if (config.getOrNull(SemanticsActions.RequestFocus)?.action == null) return@forEach
+            val bounds = node.boundsInWindow
+            // Items scrolled fully out of view report an empty box.
+            if (bounds.width < 2f || bounds.height < 2f) return@forEach
+            all += FocusTarget(node = node, bounds = bounds, layer = layer, focused = focused)
+        }
+    }
+    if (all.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-targets", layers = owners.size)
+
+    // A dialog or pop-up sits in a later layer; while one is open, stay inside it.
+    val activeLayer = all.maxOf { it.layer }
+    val source = all.lastOrNull { it.focused && it.layer == activeLayer }
+    val pool = all.filter { target ->
+        target.layer == activeLayer &&
+            !target.focused &&
+            (windowArea <= 0f ||
+                target.bounds.width * target.bounds.height <=
+                windowArea * KeyboardNavigationConfig.MAX_TARGET_AREA_FRACTION)
+    }
+
+    val ranked: List<FocusTarget> = if (source == null) {
+        // Nothing focused yet in this layer: start from the item nearest the top-left corner.
+        pool.sortedBy { it.bounds.top + it.bounds.left }
+    } else {
+        pool.mapNotNull { target ->
+            directionalScore(source.bounds, target.bounds, direction)?.let { score -> target to score }
+        }.sortedBy { it.second }.map { it.first }
+    }
+
+    for (target in ranked.take(3)) {
+        val focusedNow = target.node.config.getOrNull(SemanticsActions.RequestFocus)?.action?.invoke() == true
+        if (focusedNow) {
+            return SemanticsMoveOutcome(
+                moved = true,
+                how = if (source == null) "first" else "nearest",
+                targets = pool.size,
+                layers = owners.size,
+                from = source?.bounds,
+                to = target.bounds,
+            )
+        }
+    }
+
+    if (source != null && KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS) {
+        if (scrollAncestor(source.node, direction)) {
+            return SemanticsMoveOutcome(
+                moved = true,
+                how = "scrolled",
+                targets = pool.size,
+                layers = owners.size,
+                from = source.bounds,
+            )
+        }
+    }
+
+    return SemanticsMoveOutcome(
+        moved = false,
+        how = if (ranked.isEmpty()) "nothing-that-way" else "focus-refused",
+        targets = pool.size,
+        layers = owners.size,
+        from = source?.bounds,
+    )
+}
+
+/**
+ * Lower is better; null means the target is not in that direction at all. A target must start
+ * past the middle of the current item, so neighbours in the same row never count as "below".
+ */
+private fun directionalScore(source: Rect, target: Rect, direction: FocusDirection): Float? {
+    val forward: Float
+    val sideways: Float
+    when (direction) {
+        FocusDirection.Down -> {
+            if (target.top < source.center.y || target.bottom <= source.bottom) return null
+            forward = max(0f, target.top - source.bottom)
+            sideways = rangeGap(source.left, source.right, target.left, target.right)
+        }
+        FocusDirection.Up -> {
+            if (target.bottom > source.center.y || target.top >= source.top) return null
+            forward = max(0f, source.top - target.bottom)
+            sideways = rangeGap(source.left, source.right, target.left, target.right)
+        }
+        FocusDirection.Right -> {
+            if (target.left < source.center.x || target.right <= source.right) return null
+            forward = max(0f, target.left - source.right)
+            sideways = rangeGap(source.top, source.bottom, target.top, target.bottom)
+        }
+        FocusDirection.Left -> {
+            if (target.right > source.center.x || target.left >= source.left) return null
+            forward = max(0f, source.left - target.right)
+            sideways = rangeGap(source.top, source.bottom, target.top, target.bottom)
+        }
+        else -> return null
+    }
+    return forward + sideways * KeyboardNavigationConfig.SIDEWAYS_DISTANCE_WEIGHT
+}
+
+/** Distance between two ranges on one axis; zero when they overlap. */
+private fun rangeGap(aStart: Float, aEnd: Float, bStart: Float, bEnd: Float): Float = when {
+    bStart > aEnd -> bStart - aEnd
+    aStart > bEnd -> aStart - bEnd
+    else -> 0f
+}
+
+private fun scrollAncestor(node: SemanticsNode, direction: FocusDirection): Boolean {
+    var ancestor = node.parent
+    while (ancestor != null) {
+        val scrollBy = ancestor.config.getOrNull(SemanticsActions.ScrollBy)?.action
+        if (scrollBy != null) {
+            val box = ancestor.boundsInWindow
+            val stepX = box.width * KeyboardNavigationConfig.SCROLL_STEP_FRACTION
+            val stepY = box.height * KeyboardNavigationConfig.SCROLL_STEP_FRACTION
+            val scrolled = when (direction) {
+                FocusDirection.Down -> scrollBy(0f, stepY)
+                FocusDirection.Up -> scrollBy(0f, -stepY)
+                FocusDirection.Right -> scrollBy(stepX, 0f)
+                FocusDirection.Left -> scrollBy(-stepX, 0f)
+                else -> false
+            }
+            if (scrolled) return true
+        }
+        ancestor = ancestor.parent
+    }
+    return false
+}
+
+private fun describeRect(rect: Rect?): String =
+    rect?.let { "${it.left.toInt()},${it.top.toInt()} ${it.width.toInt()}x${it.height.toInt()}" } ?: "none"
+
+// ---------------------------------------------------------------------------------------------
+// Host focus target
+// ---------------------------------------------------------------------------------------------
 
 private class KeyboardFocusHostState {
     var hasFocus by mutableStateOf(false)

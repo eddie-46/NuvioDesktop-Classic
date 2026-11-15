@@ -1,11 +1,13 @@
 package com.nuvio.app
 
+import com.nuvio.app.core.ui.LocalKeyboardSemanticsOwners
 import com.nuvio.app.features.autosync.AutoSyncPreferencesDesktop
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.SwingWindow
 import androidx.compose.ui.configureSwingGlobalsForCompose
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -232,7 +234,14 @@ fun main(args: Array<String>) {
                     ProvideDesktopWindowInsets(
                         isFullscreen = windowState.placement == WindowPlacement.Fullscreen,
                     ) {
-                        MiddleClickAutoscroll { App() }
+                        val keyboardSemanticsOwners = remember(window) {
+                            DesktopSemanticsOwnersProvider(window)
+                        }
+                        CompositionLocalProvider(
+                            LocalKeyboardSemanticsOwners provides keyboardSemanticsOwners,
+                        ) {
+                            MiddleClickAutoscroll { App() }
+                        }
                     }
                 }
             } else {
