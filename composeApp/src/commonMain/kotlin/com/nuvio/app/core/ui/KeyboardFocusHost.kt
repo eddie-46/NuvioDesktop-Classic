@@ -1,14 +1,19 @@
 package com.nuvio.app.core.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
@@ -32,10 +37,13 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.node.DelegatingNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nuvio.app.isDesktop
 import kotlinx.coroutines.delay
 
@@ -68,8 +76,18 @@ internal object KeyboardNavigationConfig {
 
     /** How often (ms) the ring position is refreshed while the keyboard is in use. */
     const val RING_REFRESH_MS = 16L
+
+    /**
+     * A focused item covering more than this share of the window is treated as a container
+     * (a page or a scrolling area), and arrows step into it instead of past it.
+     */
+    const val CONTAINER_AREA_FRACTION = 0.25f
+
+    /** F9 shows a small on-screen readout of what the keyboard navigation is doing. */
+    const val DEBUG_OVERLAY_KEY_ENABLED = true
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     if (!isDesktop || !KeyboardNavigationConfig.ENABLED) {
@@ -81,17 +99,52 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     val hostState = remember { KeyboardFocusHostState() }
     var keyboardMode by remember { mutableStateOf(false) }
     var focusedRect by remember { mutableStateOf<Rect?>(null) }
+    var hostSize by remember { mutableStateOf(IntSize.Zero) }
+    var debugVisible by remember { mutableStateOf(false) }
+    var debugLine by remember { mutableStateOf("no arrow key seen yet") }
     val ringColor = MaterialTheme.colorScheme.onBackground
 
     // Keep focus on the host whenever nothing else holds it, so the first arrow press
     // always has somewhere to start from.
     LaunchedEffect(hostState.hasFocus) {
-        if (hostState.hasFocus) return@LaunchedEffect
-        repeat(10) {
-            val focused = runCatching { hostState.node?.requestFocus() }.getOrNull() == true
-            if (focused) return@LaunchedEffect
-            delay(100)
+        while (!hostState.hasFocus) {
+            runCatching { hostState.node?.requestFocus() }
+            delay(250)
         }
+    }
+
+    fun currentRect(): Rect? = runCatching { hostState.node?.getFocusedRect() }.getOrNull()
+
+    fun isContainer(rect: Rect?): Boolean {
+        if (hostState.selfFocused) return true
+        val hostArea = hostSize.width.toFloat() * hostSize.height.toFloat()
+        if (rect == null || hostArea <= 0f) return false
+        return rect.width * rect.height > hostArea * KeyboardNavigationConfig.CONTAINER_AREA_FRACTION
+    }
+
+    // Compose's own arrow-key search never steps *into* the item that currently holds focus,
+    // so a focused page or scrolling area would trap the keyboard. Step into containers here.
+    fun moveWithArrows(direction: FocusDirection): Boolean {
+        val startedInContainer = isContainer(currentRect())
+        var entered = 0
+        var moved = false
+        if (startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
+            moved = true
+            entered++
+        }
+        if (!moved) moved = focusManager.moveFocus(direction)
+        if (!moved && !startedInContainer && focusManager.moveFocus(FocusDirection.Enter)) {
+            moved = true
+            entered++
+        }
+        var guard = 0
+        while (moved && guard < 3 && isContainer(currentRect())) {
+            if (!focusManager.moveFocus(FocusDirection.Enter)) break
+            entered++
+            guard++
+        }
+        debugLine = "dir=$direction moved=$moved entered=$entered startContainer=$startedInContainer"
+        return moved
     }
 
     // Follow the focused item while the keyboard is in use (it moves when lists scroll).
@@ -110,9 +163,16 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onSizeChanged { hostSize = it }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key.isNavigationKey()) {
                     keyboardMode = true
+                }
+                if (KeyboardNavigationConfig.DEBUG_OVERLAY_KEY_ENABLED &&
+                    event.type == KeyEventType.KeyDown && event.key == Key.F9
+                ) {
+                    debugVisible = !debugVisible
+                    return@onPreviewKeyEvent true
                 }
                 false
             }
@@ -127,7 +187,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                     Key.DirectionRight -> FocusDirection.Right
                     else -> null
                 } ?: return@onKeyEvent false
-                focusManager.moveFocus(direction)
+                moveWithArrows(direction)
             }
             .then(KeyboardFocusHostElement(hostState))
             .pointerInput(Unit) {
@@ -189,11 +249,29 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                     },
             )
         }
+        if (debugVisible) {
+            val rect = focusedRect
+            Text(
+                text = "keyboard nav | hostHasFocus=${hostState.hasFocus} hostSelf=${hostState.selfFocused} " +
+                    "keyboardMode=$keyboardMode\n" +
+                    "focused=${rect?.let { "${it.left.toInt()},${it.top.toInt()} ${it.width.toInt()}x${it.height.toInt()}" } ?: "none"} " +
+                    "window=${hostSize.width}x${hostSize.height}\n" +
+                    debugLine,
+                color = Color.White,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+                    .background(Color.Black.copy(alpha = 0.8f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
     }
 }
 
 private class KeyboardFocusHostState {
     var hasFocus by mutableStateOf(false)
+    var selfFocused by mutableStateOf(false)
     var node: FocusTargetModifierNode? = null
 }
 
@@ -213,7 +291,10 @@ private class KeyboardFocusHostNode(
     private val focusTarget = delegate(
         FocusTargetModifierNode(
             focusability = Focusability.Always,
-            onFocusChange = { _, current -> state.hasFocus = current.hasFocus },
+            onFocusChange = { _, current ->
+                state.hasFocus = current.hasFocus
+                state.selfFocused = current.isFocused
+            },
         ),
     )
 
@@ -224,6 +305,7 @@ private class KeyboardFocusHostNode(
     override fun onDetach() {
         if (state.node === focusTarget) state.node = null
         state.hasFocus = false
+        state.selfFocused = false
     }
 
     fun updateState(newState: KeyboardFocusHostState) {
