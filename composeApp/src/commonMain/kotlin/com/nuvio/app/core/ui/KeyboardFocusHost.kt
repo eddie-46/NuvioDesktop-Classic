@@ -11,6 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -50,8 +51,12 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import com.nuvio.app.isDesktop
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.max
 
 /**
@@ -82,6 +87,9 @@ internal object KeyboardNavigationConfig {
 
     /** Share of the surrounding list scrolled by one arrow press in that case. */
     const val SCROLL_STEP_FRACTION = 0.6f
+
+    /** After such a scroll, wait this long (ms) for it to settle, then look again for a target. */
+    const val SCROLL_SETTLE_MS = 350L
 
     /** Items covering more than this share of the window are page backgrounds, not targets. */
     const val MAX_TARGET_AREA_FRACTION = 0.6f
@@ -147,25 +155,53 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         }
     }
 
-    fun moveWithArrows(direction: FocusDirection): Boolean {
+    val scope = rememberCoroutineScope()
+    val retryHolder = remember { RetryHolder() }
+
+    fun searchAndMove(direction: FocusDirection, allowScroll: Boolean): SemanticsMoveOutcome {
         val windowArea = hostSize.width.toFloat() * hostSize.height.toFloat()
-        val outcome = runCatching {
+        // Some items (text boxes inside a wrapper, for one) do not report themselves as focused
+        // in the semantics tree, so the focused box known to the host is the fallback origin.
+        val hostFocusedRect = if (hostState.selfFocused) {
+            null
+        } else {
+            runCatching { hostState.node?.getFocusedRect() }.getOrNull()
+        }
+        return runCatching {
             moveFocusBySemantics(
                 owners = semanticsOwners(),
                 direction = direction,
                 windowArea = windowArea,
+                fallbackSource = hostFocusedRect,
+                allowScroll = allowScroll,
             )
         }.getOrElse { error ->
             SemanticsMoveOutcome(moved = false, how = "error:${error::class.simpleName}")
         }
+    }
+
+    fun describeOutcome(direction: FocusDirection, outcome: SemanticsMoveOutcome, how: String, moved: Boolean) =
+        "dir=$direction how=$how moved=$moved targets=${outcome.targets} " +
+            "layers=${outcome.layers} from=${describeRect(outcome.from)} to=${describeRect(outcome.to)}"
+
+    fun moveWithArrows(direction: FocusDirection): Boolean {
+        retryHolder.job?.cancel()
+        val outcome = searchAndMove(direction, allowScroll = KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS)
         var moved = outcome.moved
         var how = outcome.how
         if (!moved && focusManager.moveFocus(direction)) {
             moved = true
             how += "+compose"
         }
-        debugLine = "dir=$direction how=$how moved=$moved targets=${outcome.targets} " +
-            "layers=${outcome.layers} from=${describeRect(outcome.from)} to=${describeRect(outcome.to)}"
+        debugLine = describeOutcome(direction, outcome, how, moved)
+        if (outcome.scrolled) {
+            // The next row was out of view: once the scroll settles, land on it.
+            retryHolder.job = scope.launch {
+                delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
+                val retry = searchAndMove(direction, allowScroll = false)
+                debugLine = describeOutcome(direction, retry, "scrolled-then-${retry.how}", retry.moved)
+            }
+        }
         return moved
     }
 
@@ -290,6 +326,10 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
 // Arrow-key search over the semantics tree
 // ---------------------------------------------------------------------------------------------
 
+private class RetryHolder {
+    var job: Job? = null
+}
+
 private class SemanticsMoveOutcome(
     val moved: Boolean,
     val how: String,
@@ -297,43 +337,72 @@ private class SemanticsMoveOutcome(
     val layers: Int = 0,
     val from: Rect? = null,
     val to: Rect? = null,
+    val scrolled: Boolean = false,
 )
 
 private class FocusTarget(
     val node: SemanticsNode,
+    /** The visible part of the item. */
     val bounds: Rect,
+    /** The whole item, including any part scrolled out of view. */
+    val fullBounds: Rect,
     val layer: Int,
     val focused: Boolean,
+)
+
+private class ScrollArea(
+    val node: SemanticsNode,
+    val bounds: Rect,
+    val layer: Int,
 )
 
 private fun moveFocusBySemantics(
     owners: Collection<SemanticsOwner>,
     direction: FocusDirection,
     windowArea: Float,
+    fallbackSource: Rect?,
+    allowScroll: Boolean,
 ): SemanticsMoveOutcome {
     if (owners.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-semantics")
 
     val all = ArrayList<FocusTarget>()
+    val scrollAreas = ArrayList<ScrollArea>()
     owners.forEachIndexed { layer, owner ->
         owner.getAllSemanticsNodes(mergingEnabled = true).forEach { node ->
             val config = node.config
+            val visible = node.boundsInWindow
+            if (config.getOrNull(SemanticsActions.ScrollBy)?.action != null &&
+                visible.width >= 2f && visible.height >= 2f
+            ) {
+                scrollAreas += ScrollArea(node = node, bounds = visible, layer = layer)
+            }
             val focused = config.getOrNull(SemanticsProperties.Focused) ?: return@forEach
             if (config.contains(SemanticsProperties.Disabled)) return@forEach
             if (config.getOrNull(SemanticsActions.RequestFocus)?.action == null) return@forEach
-            val bounds = node.boundsInWindow
-            // Items scrolled fully out of view report an empty box.
-            if (bounds.width < 2f || bounds.height < 2f) return@forEach
-            all += FocusTarget(node = node, bounds = bounds, layer = layer, focused = focused)
+            // Items scrolled fully out of view report an empty visible box. Keep the focused
+            // one anyway: it is where the search starts from.
+            if (!focused && (visible.width < 2f || visible.height < 2f)) return@forEach
+            all += FocusTarget(
+                node = node,
+                bounds = visible,
+                fullBounds = Rect(node.positionInWindow, node.size.toSize()),
+                layer = layer,
+                focused = focused,
+            )
         }
     }
     if (all.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-targets", layers = owners.size)
 
     // A dialog or pop-up sits in a later layer; while one is open, stay inside it.
     val activeLayer = all.maxOf { it.layer }
-    val source = all.lastOrNull { it.focused && it.layer == activeLayer }
+    val focusedTarget = all.lastOrNull { it.focused && it.layer == activeLayer }
+    val source: Rect? = focusedTarget?.fullBounds ?: fallbackSource
     val pool = all.filter { target ->
         target.layer == activeLayer &&
             !target.focused &&
+            target.bounds.width >= 2f && target.bounds.height >= 2f &&
+            // A wrapper drawn exactly where the focused item is counts as the same item.
+            (source == null || !sameBox(source, target.fullBounds)) &&
             (windowArea <= 0f ||
                 target.bounds.width * target.bounds.height <=
                 windowArea * KeyboardNavigationConfig.MAX_TARGET_AREA_FRACTION)
@@ -344,7 +413,7 @@ private fun moveFocusBySemantics(
         pool.sortedBy { it.bounds.top + it.bounds.left }
     } else {
         pool.mapNotNull { target ->
-            directionalScore(source.bounds, target.bounds, direction)?.let { score -> target to score }
+            directionalScore(source, target.bounds, direction)?.let { score -> target to score }
         }.sortedBy { it.second }.map { it.first }
     }
 
@@ -356,20 +425,22 @@ private fun moveFocusBySemantics(
                 how = if (source == null) "first" else "nearest",
                 targets = pool.size,
                 layers = owners.size,
-                from = source?.bounds,
+                from = source,
                 to = target.bounds,
             )
         }
     }
 
-    if (source != null && KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS) {
-        if (scrollAncestor(source.node, direction)) {
+    if (source != null && allowScroll) {
+        val areas = scrollAreas.filter { it.layer == activeLayer }
+        if (scrollTowards(areas, source, direction)) {
             return SemanticsMoveOutcome(
                 moved = true,
                 how = "scrolled",
                 targets = pool.size,
                 layers = owners.size,
-                from = source.bounds,
+                from = source,
+                scrolled = true,
             )
         }
     }
@@ -379,9 +450,13 @@ private fun moveFocusBySemantics(
         how = if (ranked.isEmpty()) "nothing-that-way" else "focus-refused",
         targets = pool.size,
         layers = owners.size,
-        from = source?.bounds,
+        from = source,
     )
 }
+
+private fun sameBox(a: Rect, b: Rect): Boolean =
+    abs(a.left - b.left) <= 3f && abs(a.top - b.top) <= 3f &&
+        abs(a.right - b.right) <= 3f && abs(a.bottom - b.bottom) <= 3f
 
 /**
  * Lower is better; null means the target is not in that direction at all. A target must start
@@ -423,26 +498,34 @@ private fun rangeGap(aStart: Float, aEnd: Float, bStart: Float, bEnd: Float): Fl
     else -> 0f
 }
 
-private fun scrollAncestor(node: SemanticsNode, direction: FocusDirection): Boolean {
-    var ancestor = node.parent
-    while (ancestor != null) {
-        val scrollBy = ancestor.config.getOrNull(SemanticsActions.ScrollBy)?.action
-        if (scrollBy != null) {
-            val box = ancestor.boundsInWindow
-            val stepX = box.width * KeyboardNavigationConfig.SCROLL_STEP_FRACTION
-            val stepY = box.height * KeyboardNavigationConfig.SCROLL_STEP_FRACTION
-            val scrolled = when (direction) {
-                FocusDirection.Down -> scrollBy(0f, stepY)
-                FocusDirection.Up -> scrollBy(0f, -stepY)
-                FocusDirection.Right -> scrollBy(stepX, 0f)
-                FocusDirection.Left -> scrollBy(-stepX, 0f)
-                else -> false
-            }
-            if (scrolled) return true
-        }
-        ancestor = ancestor.parent
+/**
+ * Scrolls the innermost list around [source] that runs along the pressed direction and still
+ * has somewhere to go. A sideways row is skipped for Up/Down, and the page for Left/Right.
+ */
+private fun scrollTowards(areas: List<ScrollArea>, source: Rect, direction: FocusDirection): Boolean {
+    val vertical = direction == FocusDirection.Down || direction == FocusDirection.Up
+    val forward = direction == FocusDirection.Down || direction == FocusDirection.Right
+    val usable = areas.filter { area ->
+        val range = area.node.config.getOrNull(
+            if (vertical) SemanticsProperties.VerticalScrollAxisRange else SemanticsProperties.HorizontalScrollAxisRange,
+        ) ?: return@filter false
+        val value = range.value()
+        val towardsEnd = if (range.reverseScrolling) !forward else forward
+        if (towardsEnd) value < range.maxValue() else value > 0f
     }
-    return false
+    if (usable.isEmpty()) return false
+    val around = usable.filter { it.bounds.overlaps(source) }
+    val chosen = (around.ifEmpty { usable }).minByOrNull { it.bounds.width * it.bounds.height } ?: return false
+    val scrollBy = chosen.node.config.getOrNull(SemanticsActions.ScrollBy)?.action ?: return false
+    val step = (if (vertical) chosen.bounds.height else chosen.bounds.width) *
+        KeyboardNavigationConfig.SCROLL_STEP_FRACTION
+    return when (direction) {
+        FocusDirection.Down -> scrollBy(0f, step)
+        FocusDirection.Up -> scrollBy(0f, -step)
+        FocusDirection.Right -> scrollBy(step, 0f)
+        FocusDirection.Left -> scrollBy(-step, 0f)
+        else -> false
+    }
 }
 
 private fun describeRect(rect: Rect?): String =
