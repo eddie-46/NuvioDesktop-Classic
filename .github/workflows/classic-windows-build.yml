@@ -60,6 +60,20 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Write local.properties
+        shell: bash
+        run: |
+          : > local.properties
+          for name in INTRODB_API_URL TRAKT_CLIENT_ID TRAKT_CLIENT_SECRET TMDB_API_KEY \
+                      MDBLIST_CLIENT_ID SIMKL_CLIENT_ID NUVIO_SUPABASE_URL NUVIO_SUPABASE_ANON_KEY; do
+            value="${!name}"
+            if [[ -n "${value}" ]]; then
+              printf '%s=%s\n' "${name}" "${value}" >> local.properties
+            fi
+          done
+          echo "Configured keys:"
+          cut -d= -f1 local.properties
+
       - name: Install WebView2 SDK
         shell: pwsh
         run: |
