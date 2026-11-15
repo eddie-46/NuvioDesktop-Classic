@@ -157,6 +157,9 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
 
     val scope = rememberCoroutineScope()
     val retryHolder = remember { RetryHolder() }
+    // Where focus last landed. If that item then disappears (a section that hides itself,
+    // a list that reloads), the next arrow press carries on from here instead of starting over.
+    val lastLanding = remember { LastLanding() }
 
     fun searchAndMove(direction: FocusDirection, allowScroll: Boolean): SemanticsMoveOutcome {
         val windowArea = hostSize.width.toFloat() * hostSize.height.toFloat()
@@ -173,8 +176,11 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 direction = direction,
                 windowArea = windowArea,
                 fallbackSource = hostFocusedRect,
+                rememberedSource = lastLanding.rect,
                 allowScroll = allowScroll,
             )
+        }.also { outcome ->
+            if (outcome.to != null) lastLanding.rect = outcome.to
         }.getOrElse { error ->
             SemanticsMoveOutcome(moved = false, how = "error:${error::class.simpleName}")
         }
@@ -330,6 +336,10 @@ private class RetryHolder {
     var job: Job? = null
 }
 
+private class LastLanding {
+    var rect: Rect? = null
+}
+
 private class SemanticsMoveOutcome(
     val moved: Boolean,
     val how: String,
@@ -361,6 +371,7 @@ private fun moveFocusBySemantics(
     direction: FocusDirection,
     windowArea: Float,
     fallbackSource: Rect?,
+    rememberedSource: Rect?,
     allowScroll: Boolean,
 ): SemanticsMoveOutcome {
     if (owners.isEmpty()) return SemanticsMoveOutcome(moved = false, how = "no-semantics")
@@ -396,7 +407,9 @@ private fun moveFocusBySemantics(
     // A dialog or pop-up sits in a later layer; while one is open, stay inside it.
     val activeLayer = all.maxOf { it.layer }
     val focusedTarget = all.lastOrNull { it.focused && it.layer == activeLayer }
-    val source: Rect? = focusedTarget?.fullBounds ?: fallbackSource
+    val liveSource: Rect? = focusedTarget?.fullBounds ?: fallbackSource
+    // Nothing holds focus right now: carry on from where focus last was, if known.
+    val source: Rect? = liveSource ?: rememberedSource
     val pool = all.filter { target ->
         target.layer == activeLayer &&
             !target.focused &&
@@ -408,13 +421,20 @@ private fun moveFocusBySemantics(
                 windowArea * KeyboardNavigationConfig.MAX_TARGET_AREA_FRACTION)
     }
 
-    val ranked: List<FocusTarget> = if (source == null) {
-        // Nothing focused yet in this layer: start from the item nearest the top-left corner.
-        pool.sortedBy { it.bounds.top + it.bounds.left }
+    val directional: List<FocusTarget> = if (source == null) {
+        emptyList()
     } else {
         pool.mapNotNull { target ->
             directionalScore(source, target.bounds, direction)?.let { score -> target to score }
         }.sortedBy { it.second }.map { it.first }
+    }
+    // With no live focus and nothing that way from the remembered spot (or no remembered spot
+    // at all), start from the item nearest the top-left corner.
+    val startOver = liveSource == null && directional.isEmpty()
+    val ranked: List<FocusTarget> = if (startOver) {
+        pool.sortedBy { it.bounds.top + it.bounds.left }
+    } else {
+        directional
     }
 
     for (target in ranked.take(3)) {
@@ -422,7 +442,7 @@ private fun moveFocusBySemantics(
         if (focusedNow) {
             return SemanticsMoveOutcome(
                 moved = true,
-                how = if (source == null) "first" else "nearest",
+                how = if (startOver) "first" else if (liveSource == null) "nearest-from-last" else "nearest",
                 targets = pool.size,
                 layers = owners.size,
                 from = source,
@@ -431,9 +451,9 @@ private fun moveFocusBySemantics(
         }
     }
 
-    if (source != null && allowScroll) {
+    if (liveSource != null && allowScroll) {
         val areas = scrollAreas.filter { it.layer == activeLayer }
-        if (scrollTowards(areas, source, direction)) {
+        if (scrollTowards(areas, liveSource, direction)) {
             return SemanticsMoveOutcome(
                 moved = true,
                 how = "scrolled",

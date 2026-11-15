@@ -103,6 +103,8 @@ fun SearchScreen(
 ) {
     val focusRequester = remember { FocusRequester() }
     var isSearchFocused by remember { mutableStateOf(false) }
+    // Classic fork: keeps the recent searches on screen while keyboard focus is inside them.
+    var isRecentsFocused by remember { mutableStateOf(false) }
 
     ScreenActivityEffect(listState) { screenActive ->
         if (!screenActive) {
@@ -136,6 +138,10 @@ fun SearchScreen(
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(query) {
+        // The section leaves the screen once a search is typed or picked.
+        if (query.isNotBlank()) isRecentsFocused = false
+    }
     var lastRequestedQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var observedOfflineState by remember { mutableStateOf(false) }
     val discoverInFocus by remember(query, listState) {
@@ -317,13 +323,14 @@ fun SearchScreen(
         }
 
         if (query.isBlank()) {
-            if (isSearchFocused && recentSearches.isNotEmpty()) {
+            if ((isSearchFocused || isRecentsFocused) && recentSearches.isNotEmpty()) {
                 if (!isDesktop) focusRequester.captureFocus()
                 item(key = "recent_searches") {
                     SearchRecentSection(
                         recentSearches = recentSearches,
                         onSearchPress = { recentQuery -> query = recentQuery },
                         onRemoveSearch = SearchHistoryRepository::removeSearch,
+                        modifier = Modifier.onFocusChanged { isRecentsFocused = it.hasFocus },
                     )
                 }
             }
