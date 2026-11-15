@@ -60,6 +60,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Set installer version
+        shell: bash
+        run: |
+          # Every build gets a higher version than the last one (and than the
+          # official releases), so the MSI installs as an upgrade in place.
+          echo "NUVIO_DESKTOP_VERSION_NAME=0.1.$((1000 + GITHUB_RUN_NUMBER))" >> "${GITHUB_ENV}"
+
       - name: Write local.properties
         shell: bash
         run: |
