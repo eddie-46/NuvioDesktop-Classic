@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.LocalClassicInlineSourcesClose
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.nuvio
@@ -77,7 +78,10 @@ internal fun StreamDestination(
     openExternalStreamUrl: (String) -> Boolean,
     onLandscapeLoadingChanged: (Boolean) -> Unit,
 ) {
-    val onBack = rememberGuardedPopBackStack(navController, route)
+    // Classic fork: inside the details page's side panel, "back" closes the panel.
+    val inlineClose = LocalClassicInlineSourcesClose.current
+    val guardedBack = rememberGuardedPopBackStack(navController, route)
+    val onBack = inlineClose ?: guardedBack
     val launch = remember(route.launchId) {
         StreamLaunchStore.get(route.launchId)
     }

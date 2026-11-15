@@ -43,6 +43,14 @@ internal object ClassicLayoutConfig {
 
     /** Share of the bar's width the search field takes, up to the maximum above. */
     const val TOP_SEARCH_FIELD_WIDTH_FRACTION = 0.5f
+
+    /** Show sources in a panel on the details page instead of on a separate page. */
+    const val INLINE_SOURCES_ENABLED = true
+
+    /** Share of the window the sources panel takes, within the limits below. */
+    const val INLINE_SOURCES_WIDTH_FRACTION = 0.38f
+    const val INLINE_SOURCES_MIN_WIDTH_DP = 420
+    const val INLINE_SOURCES_MAX_WIDTH_DP = 640
 }
 
 /** Height the bar occupies, for screens that need to start their content below it. */

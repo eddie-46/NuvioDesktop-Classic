@@ -3,10 +3,27 @@ package com.nuvio.app
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.coerceIn
+import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.ClassicInlineSources
+import com.nuvio.app.core.ui.ClassicLayoutConfig
+import com.nuvio.app.core.ui.LocalClassicInlineSourcesClose
+import com.nuvio.app.core.ui.PlatformBackHandler
+import com.nuvio.app.navigation.StreamRoute
 import com.nuvio.app.features.details.MetaDetailsScreen
 import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
@@ -72,9 +89,34 @@ internal fun DetailsDestination(
     onPlayManually: ContentPlayAction,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
+    inlineSources: (@Composable (StreamRoute) -> Unit)? = null,
 ) {
     val onBack = rememberGuardedPopBackStack(navController, route)
     val onOpenMeta = rememberOpenMeta(navController)
+
+    // Classic fork: this page hosts the sources panel while it is on screen.
+    val inlineSourcesEnabled = inlineSources != null && ClassicInlineSources.enabled
+    if (inlineSourcesEnabled) {
+        DisposableEffect(route) {
+            ClassicInlineSources.attach(route)
+            onDispose {
+                ClassicInlineSources.detach(route, stillOnBackStack = route in navController.routes)
+            }
+        }
+    }
+    val inlineRequest = if (inlineSourcesEnabled) {
+        ClassicInlineSources.request?.takeIf { it.host == route }
+    } else {
+        null
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val inlinePanelWidth = (maxWidth * ClassicLayoutConfig.INLINE_SOURCES_WIDTH_FRACTION).coerceIn(
+        ClassicLayoutConfig.INLINE_SOURCES_MIN_WIDTH_DP.dp,
+        ClassicLayoutConfig.INLINE_SOURCES_MAX_WIDTH_DP.dp,
+    )
+    Row(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
     val directorRole = stringResource(Res.string.person_role_director)
     val writerRole = stringResource(Res.string.person_role_writer)
     val creatorRole = stringResource(Res.string.person_role_creator)
@@ -123,6 +165,29 @@ internal fun DetailsDestination(
         animatedVisibilityScope = animatedVisibilityScope,
         modifier = Modifier.fillMaxSize(),
     )
+    }
+    if (inlineRequest != null && inlineSources != null) {
+        Box(
+            modifier = Modifier
+                .width(inlinePanelWidth)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            CompositionLocalProvider(
+                LocalClassicInlineSourcesClose provides { ClassicInlineSources.close(route) },
+            ) {
+                key(inlineRequest.launchId) {
+                    inlineSources(StreamRoute(launchId = inlineRequest.launchId, title = inlineRequest.title))
+                }
+            }
+        }
+    }
+    }
+    }
+    // Back closes the sources panel first, then the page.
+    PlatformBackHandler(enabled = inlineRequest != null) {
+        ClassicInlineSources.close(route)
+    }
 }
 
 @OptIn(ExperimentalSharedTransitionApi::class)

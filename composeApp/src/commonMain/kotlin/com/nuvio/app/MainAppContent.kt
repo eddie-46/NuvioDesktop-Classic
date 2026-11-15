@@ -52,6 +52,7 @@ import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import androidx.navigationevent.DirectNavigationEventInput
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
+import com.nuvio.app.core.ui.ClassicInlineSources
 import com.nuvio.app.core.ui.LocalPosterClickAnchor
 import com.nuvio.app.core.ui.LocalVerticalBarPadding
 import com.nuvio.app.navigation.PosterNavigationState
@@ -1058,6 +1059,10 @@ internal fun MainAppContent(
                     startFromBeginning = startFromBeginning,
                 ),
             )
+            // Classic fork: from the details page, sources open in its side panel.
+            if (ClassicInlineSources.tryShow(navController.currentRoute, streamLaunchId, title)) {
+                return
+            }
             navController.navigate(
                 StreamRoute(launchId = streamLaunchId, title = title),
             )
@@ -1588,6 +1593,16 @@ internal fun MainAppContent(
                         navController = navController,
                         onPlay = onPlay,
                         onPlayManually = onPlayManually,
+                        inlineSources = { streamRoute ->
+                            StreamDestination(
+                                route = streamRoute,
+                                onLandscapeLoadingChanged = {},
+                                navController = navController,
+                                p2pEnabled = p2pSettingsUiState.p2pEnabled,
+                                openExternalPlayback = ::openExternalPlayback,
+                                openExternalStreamUrl = ::openExternalStreamUrl,
+                            )
+                        },
                         sharedTransitionScope = this@SharedTransitionLayout,
                         animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                     )
