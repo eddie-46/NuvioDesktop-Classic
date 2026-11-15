@@ -40,7 +40,10 @@ import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.LocalNuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioClassicNavigationBar
+import com.nuvio.app.core.ui.ClassicLayoutConfig
+import com.nuvio.app.core.ui.ClassicTopSearchBar
 import com.nuvio.app.core.ui.DesktopNavigationBar
+import com.nuvio.app.core.ui.classicTopSearchBarHeight
 import com.nuvio.app.core.ui.FloatingNavigationBar
 import com.nuvio.app.core.ui.FloatingNavigationItem
 import com.nuvio.app.core.ui.PlatformBackHandler
@@ -59,6 +62,7 @@ import nuvio.composeapp.generated.resources.compose_nav_library
 import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.compose_nav_settings
+import nuvio.composeapp.generated.resources.compose_search_placeholder
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
 import org.jetbrains.compose.resources.stringResource
@@ -98,6 +102,11 @@ internal fun MainTabsDestination(
             desktopNavigationLayout == DesktopNavigationLayout.Sidebar
         val useDesktopTopBar = isDesktop && !useNativeBottomTabs && !useDesktopSidebar
         val useFloatingTopBar = !isDesktop && isTabletLayout && !useNativeBottomTabs
+        // Classic fork: a search bar across the top of Home and Library in the sidebar layout.
+        val showClassicSearchBar = ClassicLayoutConfig.TOP_SEARCH_BAR_ENABLED &&
+            useDesktopSidebar &&
+            (selectedTab == AppScreenTab.Home || selectedTab == AppScreenTab.Library)
+        val classicSearchBarHeight = classicTopSearchBarHeight()
         val topChromePadding = if (useFloatingTopBar || useDesktopTopBar) {
             val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             if (useDesktopTopBar) {
@@ -105,6 +114,8 @@ internal fun MainTabsDestination(
             } else {
                 max(statusBarPadding + 24.dp, 48.dp) + 64.dp
             }
+        } else if (showClassicSearchBar) {
+            classicSearchBarHeight
         } else {
             null
         }
@@ -251,6 +262,23 @@ internal fun MainTabsDestination(
                             .then(if (requiresNavBarHaze) Modifier.hazeSource(state = navBarHazeState) else Modifier)
                             .then(if (shouldAttachNestedScroll) Modifier.nestedScroll(navBarScrollState.nestedScrollConnection) else Modifier)
                             .padding(innerPadding)
+                            .padding(start = contentStartPadding),
+                    )
+                }
+
+                if (showClassicSearchBar) {
+                    ClassicTopSearchBar(
+                        placeholder = stringResource(Res.string.compose_search_placeholder),
+                        // Over the home banner the bar floats on the artwork.
+                        solidBackground = !(selectedTab == AppScreenTab.Home && homeCatalogSettingsUiState.heroEnabled),
+                        onActivate = {
+                            // The first call switches to the Search tab; the second, now that the
+                            // tab is selected, is what asks its text box to take focus.
+                            onTabSelected(AppScreenTab.Search)
+                            onTabSelected(AppScreenTab.Search)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
                             .padding(start = contentStartPadding),
                     )
                 }
