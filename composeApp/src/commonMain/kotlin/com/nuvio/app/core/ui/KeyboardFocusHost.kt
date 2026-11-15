@@ -174,6 +174,21 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                     debugVisible = !debugVisible
                     return@onPreviewKeyEvent true
                 }
+                // Text fields swallow Up/Down for the cursor, which would trap focus inside
+                // them. Take those two before the field sees them; Left/Right stay with the field.
+                if (KeyboardNavigationConfig.ARROW_KEYS_MOVE_FOCUS &&
+                    event.type == KeyEventType.KeyDown &&
+                    !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+                ) {
+                    val vertical = when (event.key) {
+                        Key.DirectionUp -> FocusDirection.Up
+                        Key.DirectionDown -> FocusDirection.Down
+                        else -> null
+                    }
+                    if (vertical != null && moveWithArrows(vertical)) {
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 false
             }
             .onKeyEvent { event ->

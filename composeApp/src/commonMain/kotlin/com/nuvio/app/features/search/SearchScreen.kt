@@ -285,7 +285,7 @@ fun SearchScreen(
                         NuvioInputField(
                             value = query,
                             onValueChange = {
-                                focusRequester.captureFocus()
+                                if (!isDesktop) focusRequester.captureFocus()
                                 query = it
                             },
                             placeholder = stringResource(Res.string.compose_search_placeholder),
@@ -294,7 +294,7 @@ fun SearchScreen(
                                 .focusRequester(focusRequester)
                                 .onFocusChanged {
                                     isSearchFocused = it.isFocused
-                                    if (query.isNotBlank()) focusRequester.captureFocus()
+                                    if (query.isNotBlank() && !isDesktop) focusRequester.captureFocus()
                                 },
                             trailingContent = if (query.isNotBlank()) {
                                 {
@@ -318,7 +318,7 @@ fun SearchScreen(
 
         if (query.isBlank()) {
             if (isSearchFocused && recentSearches.isNotEmpty()) {
-                focusRequester.captureFocus()
+                if (!isDesktop) focusRequester.captureFocus()
                 item(key = "recent_searches") {
                     SearchRecentSection(
                         recentSearches = recentSearches,
