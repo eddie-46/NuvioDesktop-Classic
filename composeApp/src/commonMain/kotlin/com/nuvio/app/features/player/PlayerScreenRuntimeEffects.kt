@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.ui.ClassicDiagnostics
 import com.nuvio.app.core.i18n.localizedSeasonEpisodeCode
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
@@ -665,7 +666,10 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         nextEpisodeCardDismissed = false
         cancelNextEpisodeAutoPlay()
 
-        if (!playerSettingsUiState.skipIntroEnabled) return@LaunchedEffect
+        if (!playerSettingsUiState.skipIntroEnabled) {
+            ClassicDiagnostics.skipLookup = "skip lookup: Skip Intro setting is off"
+            return@LaunchedEffect
+        }
 
         if ((contentType ?: parentMetaType).equals("movie", ignoreCase = true)) {
             val api = SkipIntroRepository.getMovieSkipIntervals(parentMetaId, activeVideoId)
@@ -678,8 +682,17 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             videoId = activeVideoId,
             season = activeSeasonNumber,
             episode = activeEpisodeNumber,
-        ) ?: return@LaunchedEffect
-        if (isNetworkOffline()) return@LaunchedEffect
+        )
+        if (lookup == null) {
+            ClassicDiagnostics.skipLookup = "skip lookup: no usable id (videoId=$activeVideoId " +
+                "season=$activeSeasonNumber episode=$activeEpisodeNumber)"
+            return@LaunchedEffect
+        }
+        if (isNetworkOffline()) {
+            ClassicDiagnostics.skipLookup = "skip lookup: app thinks the network is offline"
+            return@LaunchedEffect
+        }
+        ClassicDiagnostics.skipLookup = "skip lookup: asking for $lookup"
 
         launch {
             val intervals = withTimeoutOrNull(SKIP_INTERVAL_RESOLVE_TIMEOUT_MS) {
@@ -710,7 +723,15 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                     )
                 }
             }
-            apiSkipIntervals = intervals ?: return@launch
+            if (intervals == null) {
+                ClassicDiagnostics.skipLookup = "skip lookup: timed out for $lookup"
+                return@launch
+            }
+            ClassicDiagnostics.skipLookup = "skip lookup: $lookup gave " +
+                intervals.joinToString(prefix = "[", postfix = "]") {
+                    "${it.type} ${it.startTime.toInt()}-${it.endTime.toInt()}s"
+                }
+            apiSkipIntervals = intervals
             recomputeMergedSkipIntervals()
         }
     }

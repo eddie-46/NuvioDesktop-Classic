@@ -315,7 +315,9 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 text = "keyboard nav | hostHasFocus=${hostState.hasFocus} hostSelf=${hostState.selfFocused} " +
                     "keyboardMode=$keyboardMode\n" +
                     "ring=${describeRect(focusedRect)} window=${hostSize.width}x${hostSize.height}\n" +
-                    debugLine,
+                    debugLine + "\n" +
+                    ClassicDiagnostics.skipLookup + "\n" +
+                    ClassicDiagnostics.skipIntroDb,
                 color = Color.White,
                 fontSize = 13.sp,
                 modifier = Modifier

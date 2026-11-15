@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player.skip
 
+import com.nuvio.app.core.ui.ClassicDiagnostics
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.addons.httpPostJsonWithHeaders
 import kotlinx.serialization.json.Json
@@ -33,12 +34,21 @@ internal object SkipIntroApi {
         episode: Int,
     ): IntroDbSegmentsResponse? {
         val baseUrl = IntroDbConfig.URL.trimEnd('/')
-        if (baseUrl.isBlank()) return null
+        if (baseUrl.isBlank()) {
+            ClassicDiagnostics.skipIntroDb = "IntroDB: address not set in this build"
+            return null
+        }
         val url = "$baseUrl/segments?imdb_id=$imdbId&season=$season&episode=$episode"
         return try {
             val text = httpGetText(url)
-            json.decodeFromString<IntroDbSegmentsResponse>(text)
-        } catch (_: Exception) {
+            json.decodeFromString<IntroDbSegmentsResponse>(text).also { data ->
+                ClassicDiagnostics.skipIntroDb = "IntroDB: ok $imdbId s${season}e$episode " +
+                    "intro=${data.intro != null} recap=${data.recap != null} outro=${data.outro != null} " +
+                    "(${text.length} chars from $baseUrl)"
+            }
+        } catch (error: Exception) {
+            ClassicDiagnostics.skipIntroDb = "IntroDB: failed $imdbId s${season}e$episode " +
+                "${error::class.simpleName}: ${error.message?.take(90)} ($baseUrl)"
             null
         }
     }

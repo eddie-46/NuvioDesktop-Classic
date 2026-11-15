@@ -109,6 +109,12 @@ jobs:
             --no-daemon `
             --stacktrace
 
+      - name: Show generated IntroDB setting
+        shell: bash
+        run: |
+          # Not a secret: confirms which IntroDB address was compiled into the app.
+          grep -rh "const val URL" --include=IntroDbConfig.kt composeApp/build || echo "IntroDbConfig.kt not found"
+
       - name: Upload MSI
         uses: actions/upload-artifact@v7
         with:
