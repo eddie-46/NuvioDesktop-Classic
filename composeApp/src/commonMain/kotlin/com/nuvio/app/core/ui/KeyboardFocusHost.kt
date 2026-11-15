@@ -170,7 +170,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         } else {
             runCatching { hostState.node?.getFocusedRect() }.getOrNull()
         }
-        return runCatching {
+        val outcome = runCatching {
             moveFocusBySemantics(
                 owners = semanticsOwners(),
                 direction = direction,
@@ -179,11 +179,11 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 rememberedSource = lastLanding.rect,
                 allowScroll = allowScroll,
             )
-        }.also { outcome ->
-            if (outcome.to != null) lastLanding.rect = outcome.to
         }.getOrElse { error ->
             SemanticsMoveOutcome(moved = false, how = "error:${error::class.simpleName}")
         }
+        if (outcome.to != null) lastLanding.rect = outcome.to
+        return outcome
     }
 
     fun describeOutcome(direction: FocusDirection, outcome: SemanticsMoveOutcome, how: String, moved: Boolean) =
