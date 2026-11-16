@@ -60,6 +60,9 @@ internal object ClassicLayoutConfig {
 
     /** Selecting a Continue Watching item opens its details page instead of the sources page. */
     const val CONTINUE_WATCHING_OPENS_DETAILS = true
+
+    /** ...and that page opens with the sources panel already showing for the item. */
+    const val CONTINUE_WATCHING_OPENS_SOURCES_PANEL = true
 }
 
 /** Height the bar occupies, for screens that need to start their content below it. */

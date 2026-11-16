@@ -34,8 +34,26 @@ internal object ClassicInlineSources {
     val enabled: Boolean
         get() = isDesktop && ClassicLayoutConfig.INLINE_SOURCES_ENABLED
 
+    private var pendingRoute: AppRoute? = null
+    private var pendingAction: (() -> Unit)? = null
+
+    /**
+     * Runs [action] as soon as the details page for [route] is on screen and hosting. Used to
+     * open a page with its sources panel already showing.
+     */
+    fun runWhenHosted(route: AppRoute, action: () -> Unit) {
+        pendingRoute = route
+        pendingAction = action
+    }
+
     fun attach(route: AppRoute) {
         hostRoute = route
+        if (pendingRoute == route) {
+            val action = pendingAction
+            pendingRoute = null
+            pendingAction = null
+            action?.invoke()
+        }
     }
 
     /** [stillOnBackStack] is false once the page has been closed for good, not just covered. */

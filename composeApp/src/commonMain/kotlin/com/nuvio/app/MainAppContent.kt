@@ -1277,6 +1277,24 @@ internal fun MainAppContent(
         val onContinueWatchingClick: (ContinueWatchingItem) -> Unit = { item ->
             if (
                 !item.isCloudLibraryContinueWatchingItem() &&
+                ClassicInlineSources.enabled &&
+                ClassicLayoutConfig.CONTINUE_WATCHING_OPENS_DETAILS &&
+                ClassicLayoutConfig.CONTINUE_WATCHING_OPENS_SOURCES_PANEL
+            ) {
+                // Classic fork: open the details page with the sources panel already showing
+                // for this episode or movie. Manual selection keeps the list on screen instead
+                // of auto-playing the first source.
+                val detailRoute = DetailRoute(
+                    type = item.parentMetaType,
+                    id = item.parentMetaId,
+                    title = item.title,
+                )
+                ClassicInlineSources.runWhenHosted(detailRoute) {
+                    openContinueWatching(item, true, false)
+                }
+                navController.navigate(detailRoute)
+            } else if (
+                !item.isCloudLibraryContinueWatchingItem() &&
                 (
                     // Classic fork: with sources shown on the details page, go there directly.
                     (ClassicInlineSources.enabled && ClassicLayoutConfig.CONTINUE_WATCHING_OPENS_DETAILS) ||
