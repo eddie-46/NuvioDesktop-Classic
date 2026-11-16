@@ -18,6 +18,9 @@ data class TraktAuthState(
     val pendingDeviceVerificationUrl: String? = null,
     val pendingDeviceIntervalSeconds: Int? = null,
     val pendingDeviceExpiresAtMillis: Long? = null,
+    // Classic fork: sign-in without a client secret (Trakt issues none to new apps).
+    val pendingCodeVerifier: String? = null,
+    val oauthBaseUrl: String? = null,
 ) {
     val isAuthenticated: Boolean
         get() = !accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()

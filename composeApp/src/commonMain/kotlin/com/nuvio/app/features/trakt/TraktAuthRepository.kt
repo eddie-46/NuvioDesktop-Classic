@@ -32,6 +32,9 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import com.nuvio.app.features.simkl.generateSimklPkceMaterial
 import kotlin.random.Random
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.StringResource
@@ -39,6 +42,9 @@ import org.jetbrains.compose.resources.getString
 
 object TraktAuthRepository : TrackingAuthProvider {
     private const val BASE_URL = "https://api.trakt.tv"
+    // Classic fork: Trakt's sign-in host. Apps created since Trakt stopped issuing client
+    // secrets sign in with PKCE; older apps with a secret keep the original behaviour.
+    private const val AUTH_BASE_URL = "https://auth.trakt.tv"
     private const val AUTHORIZE_URL = "https://trakt.tv/oauth/authorize"
     private const val DEVICE_ACTIVATE_URL = "https://trakt.tv/activate"
     private const val API_VERSION = "2"
@@ -121,8 +127,25 @@ object TraktAuthRepository : TrackingAuthProvider {
         return _uiState.value
     }
 
-    fun hasRequiredCredentials(): Boolean =
-        TraktConfig.CLIENT_ID.isNotBlank() && TraktConfig.CLIENT_SECRET.isNotBlank()
+    fun hasRequiredCredentials(): Boolean = TraktConfig.CLIENT_ID.isNotBlank()
+
+    private val clientSecretOrNull: String?
+        get() = TraktConfig.CLIENT_SECRET.takeIf { it.isNotBlank() }
+
+    /** Sign-in hosts to try, best guess first. A host that worked before is used alone. */
+    private fun oauthBaseUrls(): List<String> {
+        authState.oauthBaseUrl?.takeIf { it.isNotBlank() }?.let { return listOf(it) }
+        return if (clientSecretOrNull == null) listOf(AUTH_BASE_URL, BASE_URL) else listOf(BASE_URL, AUTH_BASE_URL)
+    }
+
+    private fun oauthBaseUrl(): String = oauthBaseUrls().first()
+
+    /** JSON body for a sign-in request; the client secret is left out when the app has none. */
+    private fun oauthBody(vararg fields: Pair<String, String?>): String = buildJsonObject {
+        fields.forEach { (name, value) -> if (value != null) put(name, value) }
+        put("client_id", TraktConfig.CLIENT_ID)
+        clientSecretOrNull?.let { put("client_secret", it) }
+    }.toString()
 
     fun onConnectRequested(profileId: Int = ProfileRepository.activeProfileId): String? {
         ensureLoaded(profileId)
@@ -279,18 +302,31 @@ object TraktAuthRepository : TrackingAuthProvider {
     }
 
     private suspend fun requestDeviceAuthorization(profileId: Int, generation: Long) {
-        val body = json.encodeToString(
-            TraktDeviceCodeRequest(clientId = TraktConfig.CLIENT_ID),
+        // Without a client secret the request carries a PKCE challenge, and the matching
+        // verifier is sent when the code is redeemed.
+        val pkce = if (clientSecretOrNull == null) generateSimklPkceMaterial() else null
+        val body = oauthBody(
+            "code_challenge" to pkce?.challenge,
+            "code_challenge_method" to pkce?.let { "S256" },
         )
-        val response = runCatching {
-            postTraktJson<TraktDeviceCodeResponse>(
-                url = "$BASE_URL/oauth/device/code",
-                body = body,
-            )
-        }.onFailure { error ->
-            if (error is CancellationException) throw error
-            log.w { "Failed to start Trakt device authorization: ${error.message}" }
-        }.getOrNull()
+        var response: TraktApiResponse<TraktDeviceCodeResponse>? = null
+        var usedBaseUrl: String? = null
+        for (candidate in oauthBaseUrls()) {
+            val attempt = runCatching {
+                postTraktJson<TraktDeviceCodeResponse>(
+                    url = "$candidate/oauth/device/code",
+                    body = body,
+                )
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                log.w { "Failed to start Trakt device authorization at $candidate: ${error.message}" }
+            }.getOrNull()
+            if (attempt != null) {
+                response = attempt
+                usedBaseUrl = candidate
+                if (attempt.isSuccessful && !attempt.body?.deviceCode.isNullOrBlank()) break
+            }
+        }
         if (currentProfileId != profileId || profileGeneration != generation) return
 
         val parsed = response?.body
@@ -320,6 +356,8 @@ object TraktAuthRepository : TrackingAuthProvider {
             pendingDeviceVerificationUrl = verificationUrl,
             pendingDeviceIntervalSeconds = parsed.interval?.coerceAtLeast(1) ?: 5,
             pendingDeviceExpiresAtMillis = now + expiresInSeconds * 1_000L,
+            pendingCodeVerifier = pkce?.verifier,
+            oauthBaseUrl = usedBaseUrl,
         )
         persist(profileId)
         publish(
@@ -450,15 +488,12 @@ object TraktAuthRepository : TrackingAuthProvider {
     }
 
     private suspend fun redeemDeviceAuthorization(deviceCode: String): TraktDeviceTokenResult {
-        val body = json.encodeToString(
-            TraktDeviceTokenRequest(
-                code = deviceCode,
-                clientId = TraktConfig.CLIENT_ID,
-                clientSecret = TraktConfig.CLIENT_SECRET,
-            ),
+        val body = oauthBody(
+            "code" to deviceCode,
+            "code_verifier" to authState.pendingCodeVerifier,
         )
         val response = postTraktJson<TraktTokenResponse>(
-            url = "$BASE_URL/oauth/device/token",
+            url = "${oauthBaseUrl()}/oauth/device/token",
             body = body,
         )
         response.body?.takeIf { response.isSuccessful }?.let { token ->
@@ -545,18 +580,16 @@ object TraktAuthRepository : TrackingAuthProvider {
         code: String,
         profileId: Int = currentProfileId,
     ) {
-        val body = json.encodeToString(
-            TraktAuthorizationCodeRequest(
-                code = code,
-                clientId = TraktConfig.CLIENT_ID,
-                clientSecret = TraktConfig.CLIENT_SECRET,
-                redirectUri = TraktConfig.REDIRECT_URI,
-            ),
+        val body = oauthBody(
+            "code" to code,
+            "redirect_uri" to TraktConfig.REDIRECT_URI,
+            "grant_type" to "authorization_code",
+            "code_verifier" to authState.pendingCodeVerifier,
         )
 
         val response = runCatching {
             httpPostJsonWithHeaders(
-                url = "$BASE_URL/oauth/token",
+                url = "${oauthBaseUrl()}/oauth/token",
                 body = body,
                 headers = emptyMap(),
             )
@@ -614,16 +647,10 @@ object TraktAuthRepository : TrackingAuthProvider {
 
         val token = authState.accessToken?.takeIf { it.isNotBlank() }
         if (!token.isNullOrBlank() && hasRequiredCredentials()) {
-            val body = json.encodeToString(
-                TraktRevokeRequest(
-                    token = token,
-                    clientId = TraktConfig.CLIENT_ID,
-                    clientSecret = TraktConfig.CLIENT_SECRET,
-                ),
-            )
+            val body = oauthBody("token" to token)
             runCatching {
                 httpPostJsonWithHeaders(
-                    url = "$BASE_URL/oauth/revoke",
+                    url = "${oauthBaseUrl()}/oauth/revoke",
                     body = body,
                     headers = emptyMap(),
                 )
@@ -654,19 +681,16 @@ object TraktAuthRepository : TrackingAuthProvider {
             return@withLock true
         }
 
-        val body = json.encodeToString(
-            TraktRefreshTokenRequest(
-                refreshToken = refreshToken,
-                clientId = TraktConfig.CLIENT_ID,
-                clientSecret = TraktConfig.CLIENT_SECRET,
-                redirectUri = TraktConfig.REDIRECT_URI,
-            ),
+        val body = oauthBody(
+            "refresh_token" to refreshToken,
+            "redirect_uri" to TraktConfig.REDIRECT_URI,
+            "grant_type" to "refresh_token",
         )
 
         val response = runCatching {
             httpRequestRaw(
                 method = "POST",
-                url = "$BASE_URL/oauth/token",
+                url = "${oauthBaseUrl()}/oauth/token",
                 body = body,
                 headers = mapOf(
                     "Accept" to "application/json",
@@ -751,6 +775,7 @@ object TraktAuthRepository : TrackingAuthProvider {
             pendingDeviceVerificationUrl = null,
             pendingDeviceIntervalSeconds = null,
             pendingDeviceExpiresAtMillis = null,
+            pendingCodeVerifier = null,
         )
     }
 
