@@ -1,5 +1,6 @@
 package com.nuvio.app.features.details
 
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.runtime.DisposableEffect
@@ -1318,6 +1319,9 @@ fun MetaDetailsScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
+                                    // Rows in this column stay inside it and never draw under
+                                    // the episode column beside it.
+                                    .clipToBounds()
                                     .nestedScroll(heroStretchState.nestedScrollConnection),
                             ) {
                                 if (useDesktopDetailLayout) {

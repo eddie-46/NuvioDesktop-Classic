@@ -85,6 +85,9 @@ internal object KeyboardNavigationConfig {
     /** When nothing lies in the pressed direction, scroll the surrounding list instead. */
     const val SCROLL_WHEN_NOTHING_TO_FOCUS = true
 
+    /** Left/Right stay inside a sideways row until the row has been scrolled to its end. */
+    const val ROWS_KEEP_HORIZONTAL_ARROWS = true
+
     /** Share of the surrounding list scrolled by one arrow press in that case. */
     const val SCROLL_STEP_FRACTION = 0.6f
 
@@ -612,10 +615,27 @@ private fun moveFocusBySemantics(
                 windowArea * KeyboardNavigationConfig.MAX_TARGET_AREA_FRACTION)
     }
 
+    // A sideways row that can still scroll keeps Left/Right to itself: move along the row, or
+    // scroll it, and only hand over to whatever sits beside the row once it has reached its end.
+    val horizontal = direction == FocusDirection.Left || direction == FocusDirection.Right
+    val rowArea: ScrollArea? = if (KeyboardNavigationConfig.ROWS_KEEP_HORIZONTAL_ARROWS && horizontal && liveSource != null) {
+        scrollAreas
+            .filter { area ->
+                area.layer == activeLayer &&
+                    area.bounds.contains(liveSource.center) &&
+                    canScroll(area, direction)
+            }
+            .minByOrNull { it.bounds.width * it.bounds.height }
+    } else {
+        null
+    }
+
     val directional: List<FocusTarget> = if (source == null) {
         emptyList()
     } else {
-        pool.mapNotNull { target ->
+        pool.filter { target ->
+            rowArea == null || rowArea.bounds.contains(target.bounds.center)
+        }.mapNotNull { target ->
             directionalScore(source, target.bounds, direction)?.let { score -> target to score }
         }.sortedBy { it.second }.map { it.first }
     }
@@ -643,8 +663,12 @@ private fun moveFocusBySemantics(
     }
 
     if (liveSource != null && allowScroll) {
-        val areas = scrollAreas.filter {
-            it.layer == activeLayer && (within == null || within.contains(it.bounds.center))
+        val areas = if (rowArea != null) {
+            listOf(rowArea)
+        } else {
+            scrollAreas.filter {
+                it.layer == activeLayer && (within == null || within.contains(it.bounds.center))
+            }
         }
         if (scrollTowards(areas, liveSource, direction)) {
             return SemanticsMoveOutcome(
@@ -715,17 +739,21 @@ private fun rangeGap(aStart: Float, aEnd: Float, bStart: Float, bEnd: Float): Fl
  * Scrolls the innermost list around [source] that runs along the pressed direction and still
  * has somewhere to go. A sideways row is skipped for Up/Down, and the page for Left/Right.
  */
-private fun scrollTowards(areas: List<ScrollArea>, source: Rect, direction: FocusDirection): Boolean {
+/** Whether [area] runs along [direction] and still has somewhere to go that way. */
+private fun canScroll(area: ScrollArea, direction: FocusDirection): Boolean {
     val vertical = direction == FocusDirection.Down || direction == FocusDirection.Up
     val forward = direction == FocusDirection.Down || direction == FocusDirection.Right
-    val usable = areas.filter { area ->
-        val range = area.node.config.getOrNull(
-            if (vertical) SemanticsProperties.VerticalScrollAxisRange else SemanticsProperties.HorizontalScrollAxisRange,
-        ) ?: return@filter false
-        val value = range.value()
-        val towardsEnd = if (range.reverseScrolling) !forward else forward
-        if (towardsEnd) value < range.maxValue() else value > 0f
-    }
+    val range = area.node.config.getOrNull(
+        if (vertical) SemanticsProperties.VerticalScrollAxisRange else SemanticsProperties.HorizontalScrollAxisRange,
+    ) ?: return false
+    val value = range.value()
+    val towardsEnd = if (range.reverseScrolling) !forward else forward
+    return if (towardsEnd) value < range.maxValue() else value > 0f
+}
+
+private fun scrollTowards(areas: List<ScrollArea>, source: Rect, direction: FocusDirection): Boolean {
+    val vertical = direction == FocusDirection.Down || direction == FocusDirection.Up
+    val usable = areas.filter { canScroll(it, direction) }
     if (usable.isEmpty()) return false
     val around = usable.filter { it.bounds.overlaps(source) }
     val chosen = (around.ifEmpty { usable }).minByOrNull { it.bounds.width * it.bounds.height } ?: return false
