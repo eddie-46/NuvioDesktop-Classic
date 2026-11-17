@@ -44,6 +44,14 @@ internal object ClassicLayoutConfig {
     /** Share of the bar's width the search field takes, up to the maximum above. */
     const val TOP_SEARCH_FIELD_WIDTH_FRACTION = 0.5f
 
+    /** Show page: season picker and a vertical episode list in a column beside the info. */
+    const val DETAILS_EPISODE_COLUMN_ENABLED = true
+    const val DETAILS_EPISODE_COLUMN_WIDTH_DP = 460
+    /** Space kept clear above the column for the fullscreen button. */
+    const val DETAILS_EPISODE_COLUMN_TOP_PADDING_DP = 96
+    /** Darkening behind the column so the list reads over artwork (0 = none). */
+    const val DETAILS_EPISODE_COLUMN_SCRIM_ALPHA = 0.28f
+
     /** Show sources in a panel on the details page instead of on a separate page. */
     const val INLINE_SOURCES_ENABLED = true
 

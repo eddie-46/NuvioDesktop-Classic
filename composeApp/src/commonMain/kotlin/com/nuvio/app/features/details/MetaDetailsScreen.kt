@@ -1,5 +1,7 @@
 package com.nuvio.app.features.details
 
+import androidx.compose.runtime.key
+import com.nuvio.app.core.ui.ClassicLayoutConfig
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -1299,12 +1301,16 @@ fun MetaDetailsScreen(
                             )
                         }
                         CompositionLocalProvider(LocalOnBackdrop provides backgroundMode.usesBackdropBackground) {
+                            val classicEpisodeColumn = ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_ENABLED &&
+                                useDesktopDetailLayout &&
+                                hasEpisodes
+                            Row(modifier = Modifier.fillMaxSize().zIndex(1f)) {
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .nestedScroll(heroStretchState.nestedScrollConnection)
-                                    .zIndex(1f),
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .nestedScroll(heroStretchState.nestedScrollConnection),
                             ) {
                                 if (useDesktopDetailLayout) {
                                     item(
@@ -1340,7 +1346,8 @@ fun MetaDetailsScreen(
                                     configuredMetaSectionItems(
                                         settings = metaScreenSettingsUiState.copy(
                                             items = metaScreenSettingsUiState.items.filterNot {
-                                                it.key in desktopHeroOwnedMetaSectionKeys
+                                                it.key in desktopHeroOwnedMetaSectionKeys ||
+                                                    (classicEpisodeColumn && it.key == MetaScreenSectionKey.EPISODES)
                                             },
                                         ),
                                         isMdbListActive = mdbListSettings.isActive,
@@ -1606,6 +1613,90 @@ fun MetaDetailsScreen(
                                 ) {
                                     Spacer(modifier = Modifier.height(nuvioSafeBottomPadding(32.dp)))
                                 }
+                            }
+                            if (classicEpisodeColumn) {
+                                // Classic fork: season picker and a vertical episode list in
+                                // their own column beside the info, instead of a row of cards.
+                                val classicGrouped = remember(meta.videos, meta.type) {
+                                    meta.groupedEpisodesForDisplay()
+                                }
+                                val classicSeasons = remember(classicGrouped) {
+                                    classicGrouped.keys.sortedBy(::seasonSortKey)
+                                }
+                                var classicSeasonOverride by rememberSaveable(meta.id) {
+                                    mutableStateOf<Int?>(null)
+                                }
+                                val classicSeason = classicSeasonOverride?.takeIf { it in classicGrouped }
+                                    ?: seriesAction?.seasonNumber?.takeIf { it in classicGrouped }
+                                    ?: classicSeasons.firstOrNull()
+                                if (classicSeason != null) {
+                                    val classicEpisodes = classicGrouped[classicSeason].orEmpty()
+                                    val classicCurrentIndex = if (classicSeason == seriesAction?.seasonNumber) {
+                                        classicEpisodes.indexOfFirst { it.episode == seriesAction?.episodeNumber }
+                                    } else {
+                                        -1
+                                    }
+                                    Column(
+                                        modifier = Modifier
+                                            .width(ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_WIDTH_DP.dp)
+                                            .fillMaxHeight()
+                                            .background(
+                                                Color.Black.copy(alpha = ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_SCRIM_ALPHA),
+                                            )
+                                            .padding(
+                                                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+                                                    ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_TOP_PADDING_DP.dp,
+                                                start = 16.dp,
+                                                end = 16.dp,
+                                            ),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        DetailSeriesListHeader(
+                                            meta = meta,
+                                            groupedEpisodes = classicGrouped,
+                                            seasons = classicSeasons,
+                                            currentSeason = classicSeason,
+                                            horizontalScrollPadding = 0.dp,
+                                            onSeasonSelect = { classicSeasonOverride = it },
+                                            onSeasonLongPress = { season -> selectedSeasonForActions = season },
+                                        )
+                                        key(classicSeason) {
+                                            // Open the list with the current episode near the top.
+                                            val classicListState = rememberLazyListState(
+                                                initialFirstVisibleItemIndex = (classicCurrentIndex - 1).coerceAtLeast(0),
+                                            )
+                                            LazyColumn(
+                                                state = classicListState,
+                                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                                contentPadding = PaddingValues(bottom = 24.dp),
+                                            ) {
+                                                itemsIndexed(
+                                                    items = classicEpisodes,
+                                                    key = { index, episode ->
+                                                        "classic-episode-$classicSeason-${episode.episode}-${episode.id}-$index"
+                                                    },
+                                                ) { _, episode ->
+                                                    DetailSeriesListEpisode(
+                                                        meta = meta,
+                                                        episode = episode,
+                                                        progressByVideoId = progressByVideoId,
+                                                        watchedKeys = watchedUiState.watchedKeys,
+                                                        episodeRatings = episodeImdbRatings,
+                                                        episodeRatingsVisibility = metaScreenSettingsUiState.episodeRatingsVisibility,
+                                                        blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
+                                                        onEpisodeClick = onEpisodePlayClick,
+                                                        onEpisodeLongPress = { video ->
+                                                            selectedEpisodeZoomAnchor = PosterZoomAnchorHolder.consume()
+                                                            selectedEpisodeForActions = video
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             }
                         }
                         NuvioDesktopVerticalScrollbar(
