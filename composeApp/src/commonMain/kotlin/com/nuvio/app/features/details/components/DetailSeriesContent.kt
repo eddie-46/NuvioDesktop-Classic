@@ -1,5 +1,6 @@
 package com.nuvio.app.features.details.components
 
+import com.nuvio.app.core.ui.ClassicLayoutConfig
 import com.nuvio.app.core.ui.rememberAnimatedArtworkAnimation
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -1210,7 +1211,11 @@ private fun EpisodeListCard(
             .fillMaxWidth()
             .height(sizing.cardHeight)
             .clip(cardShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(
+                    alpha = if (isDesktop) ClassicLayoutConfig.EPISODE_LIST_CARD_ALPHA else 0.45f,
+                ),
+            )
             .border(
                 width = 1.dp,
                 color = Color.White.copy(alpha = 0.1f),

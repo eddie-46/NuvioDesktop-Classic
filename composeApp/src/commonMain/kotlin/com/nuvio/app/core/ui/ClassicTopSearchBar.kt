@@ -55,6 +55,10 @@ internal object ClassicLayoutConfig {
     const val DETAILS_EPISODE_COLUMN_TOP_PADDING_DP = 96
     /** Darkening behind the column so the list reads over artwork (0 = none). */
     const val DETAILS_EPISODE_COLUMN_SCRIM_ALPHA = 0.28f
+    /** How solid the episode cards in the list are (0 = see-through, 1 = solid). */
+    const val EPISODE_LIST_CARD_ALPHA = 0.92f
+    /** Up/Down stay inside the column they start in (info, episodes, sources). */
+    const val DETAILS_COLUMNS_KEEP_VERTICAL_ARROWS = true
 
     /** Show sources in a panel on the details page instead of on a separate page. */
     const val INLINE_SOURCES_ENABLED = true

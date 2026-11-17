@@ -28,6 +28,9 @@ internal object ClassicInlineSources {
     var request: ClassicInlineSourcesRequest? by mutableStateOf(null)
         private set
 
+    /** Where the show page's episode column sits in the window, while it is showing. */
+    var episodeColumnBounds: Rect? by mutableStateOf(null)
+
     /** Where the panel sits in the window, while it is showing. Used by keyboard navigation. */
     var panelBounds: Rect? by mutableStateOf(null)
 

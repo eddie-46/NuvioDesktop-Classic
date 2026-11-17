@@ -253,6 +253,38 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         }
         panelFocus.leftEdgePresses = 0
 
+        // Show page columns: Up/Down stay in the column they start in and scroll that column.
+        val episodeColumn = ClassicInlineSources.episodeColumnBounds
+        val vertical = direction == FocusDirection.Up || direction == FocusDirection.Down
+        val column: Rect? = if (
+            ClassicLayoutConfig.DETAILS_COLUMNS_KEEP_VERTICAL_ARROWS &&
+            vertical && episodeColumn != null && focusedNow != null
+        ) {
+            when {
+                episodeColumn.contains(focusedNow.center) -> episodeColumn
+                focusedNow.center.x < episodeColumn.left ->
+                    Rect(0f, 0f, episodeColumn.left, Float.MAX_VALUE)
+                else -> null
+            }
+        } else {
+            null
+        }
+        if (column != null) {
+            val inside = searchAndMove(
+                direction = direction,
+                allowScroll = KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS,
+                within = column,
+            )
+            debugLine = describeOutcome(direction, inside, "column-${inside.how}", inside.moved)
+            if (inside.scrolled) {
+                retryHolder.job = scope.launch {
+                    delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
+                    searchAndMove(direction, allowScroll = false, within = column)
+                }
+            }
+            return true
+        }
+
         val outcome = searchAndMove(direction, allowScroll = KeyboardNavigationConfig.SCROLL_WHEN_NOTHING_TO_FOCUS)
         var moved = outcome.moved
         var how = outcome.how

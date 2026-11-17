@@ -1,5 +1,9 @@
 package com.nuvio.app.features.details
 
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.runtime.DisposableEffect
+import com.nuvio.app.core.ui.ClassicInlineSources
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -1644,6 +1648,9 @@ fun MetaDetailsScreen(
                                         modifier = Modifier
                                             .width(ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_WIDTH_DP.dp)
                                             .fillMaxHeight()
+                                            .onGloballyPositioned {
+                                                ClassicInlineSources.episodeColumnBounds = it.boundsInWindow()
+                                            }
                                             .background(
                                                 Color.Black.copy(alpha = ClassicLayoutConfig.DETAILS_EPISODE_COLUMN_SCRIM_ALPHA),
                                             )
@@ -1655,6 +1662,9 @@ fun MetaDetailsScreen(
                                             ),
                                         verticalArrangement = Arrangement.spacedBy(12.dp),
                                     ) {
+                                        DisposableEffect(Unit) {
+                                            onDispose { ClassicInlineSources.episodeColumnBounds = null }
+                                        }
                                         if (ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_ENABLED) {
                                             ClassicSeasonDropdown(
                                                 seasons = classicSeasons,
