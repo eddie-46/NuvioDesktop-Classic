@@ -100,6 +100,9 @@ internal object KeyboardNavigationConfig {
     /** How much sideways distance counts against a target compared with forward distance. */
     const val SIDEWAYS_DISTANCE_WEIGHT = 2f
 
+    /** Added to any target that is not lined up with the current item (0 = old behaviour). */
+    const val OFF_AXIS_PENALTY = 100_000f
+
     /** Pointer travel (px) that switches back from keyboard mode to mouse mode. */
     const val POINTER_MOVE_THRESHOLD_PX = 4f
 
@@ -725,7 +728,11 @@ private fun directionalScore(source: Rect, target: Rect, direction: FocusDirecti
         }
         else -> return null
     }
-    return forward + sideways * KeyboardNavigationConfig.SIDEWAYS_DISTANCE_WEIGHT
+    // An item straight ahead (lined up with the current one) always beats one that is off to
+    // the side, however near the off-side one is. Otherwise Right from a button could drop to
+    // a row underneath instead of crossing to the column beside it.
+    val offAxisPenalty = if (sideways > 0f) KeyboardNavigationConfig.OFF_AXIS_PENALTY else 0f
+    return forward + sideways * KeyboardNavigationConfig.SIDEWAYS_DISTANCE_WEIGHT + offAxisPenalty
 }
 
 /** Distance between two ranges on one axis; zero when they overlap. */
