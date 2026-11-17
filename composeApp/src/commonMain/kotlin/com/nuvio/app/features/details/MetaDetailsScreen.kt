@@ -1,5 +1,9 @@
 package com.nuvio.app.features.details
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.key
 import com.nuvio.app.core.ui.ClassicLayoutConfig
 import androidx.compose.animation.AnimatedVisibilityScope
@@ -1651,15 +1655,23 @@ fun MetaDetailsScreen(
                                             ),
                                         verticalArrangement = Arrangement.spacedBy(12.dp),
                                     ) {
-                                        DetailSeriesListHeader(
-                                            meta = meta,
-                                            groupedEpisodes = classicGrouped,
-                                            seasons = classicSeasons,
-                                            currentSeason = classicSeason,
-                                            horizontalScrollPadding = 0.dp,
-                                            onSeasonSelect = { classicSeasonOverride = it },
-                                            onSeasonLongPress = { season -> selectedSeasonForActions = season },
-                                        )
+                                        if (ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_ENABLED) {
+                                            ClassicSeasonDropdown(
+                                                seasons = classicSeasons,
+                                                currentSeason = classicSeason,
+                                                onSelect = { classicSeasonOverride = it },
+                                            )
+                                        } else {
+                                            DetailSeriesListHeader(
+                                                meta = meta,
+                                                groupedEpisodes = classicGrouped,
+                                                seasons = classicSeasons,
+                                                currentSeason = classicSeason,
+                                                horizontalScrollPadding = 0.dp,
+                                                onSeasonSelect = { classicSeasonOverride = it },
+                                                onSeasonLongPress = { season -> selectedSeasonForActions = season },
+                                            )
+                                        }
                                         key(classicSeason) {
                                             // Open the list with the current episode near the top.
                                             val classicListState = rememberLazyListState(
@@ -2255,6 +2267,78 @@ private fun MetaDetails.isSeriesLikeForEpisodeRatings(): Boolean {
     val normalizedType = type.trim().lowercase()
     val hasNumberedEpisodes = videos.any { it.season != null && it.episode != null }
     return hasNumberedEpisodes && normalizedType in setOf("series", "show", "tv", "tvshow")
+}
+
+/**
+ * Classic fork: season picker as a drop-down. The list opens in place under the button, so it
+ * works with the arrow keys like everything else on the page.
+ */
+@Composable
+private fun ClassicSeasonDropdown(
+    seasons: List<Int>,
+    currentSeason: Int,
+    onSelect: (Int) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val width = ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_WIDTH_DP.dp
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier
+                .width(width)
+                .clip(RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(enabled = seasons.size > 1) { expanded = !expanded }
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = selectedSeasonLabel(currentSeason),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (seasons.size > 1) {
+                Text(
+                    text = if (expanded) "\u25B4" else "\u25BE",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .width(width)
+                    .heightIn(max = ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_MAX_HEIGHT_DP.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                seasons.forEach { season ->
+                    val selected = season == currentSeason
+                    Text(
+                        text = selectedSeasonLabel(season),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (selected) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                                } else {
+                                    Color.Transparent
+                                },
+                            )
+                            .clickable {
+                                expanded = false
+                                onSelect(season)
+                            }
+                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

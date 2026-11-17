@@ -47,6 +47,10 @@ internal object ClassicLayoutConfig {
     /** Show page: season picker and a vertical episode list in a column beside the info. */
     const val DETAILS_EPISODE_COLUMN_ENABLED = true
     const val DETAILS_EPISODE_COLUMN_WIDTH_DP = 460
+    /** Season picker in that column: a drop-down (true) or the row of season chips (false). */
+    const val DETAILS_SEASON_DROPDOWN_ENABLED = true
+    const val DETAILS_SEASON_DROPDOWN_WIDTH_DP = 240
+    const val DETAILS_SEASON_DROPDOWN_MAX_HEIGHT_DP = 320
     /** Space kept clear above the column for the fullscreen button. */
     const val DETAILS_EPISODE_COLUMN_TOP_PADDING_DP = 96
     /** Darkening behind the column so the list reads over artwork (0 = none). */
@@ -64,7 +68,7 @@ internal object ClassicLayoutConfig {
     const val INLINE_SOURCES_TAKE_FOCUS = true
 
     /** Left presses at the panel's left edge needed to close it and return to the page. */
-    const val INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE = 2
+    const val INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE = 1
 
     /** Selecting a Continue Watching item opens its details page instead of the sources page. */
     const val CONTINUE_WATCHING_OPENS_DETAILS = true
