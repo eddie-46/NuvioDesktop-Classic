@@ -230,7 +230,8 @@ fun NuvioTheme(
 
     val density = LocalDensity.current
     val effectiveDesktopUiScale = if (isDesktop) {
-        desktopUiScale.coerceIn(NuvioDesktopMinUiScale, NuvioDesktopMaxUiScale)
+        // Classic fork: the user's interface-size setting applies on top of the window scale.
+        desktopUiScale.coerceIn(NuvioDesktopMinUiScale, NuvioDesktopMaxUiScale) * ClassicUiScale.factor
     } else {
         NuvioDesktopMinUiScale
     }

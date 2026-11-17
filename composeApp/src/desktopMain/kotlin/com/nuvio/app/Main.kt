@@ -234,6 +234,7 @@ fun main(args: Array<String>) {
                     ProvideDesktopWindowInsets(
                         isFullscreen = windowState.placement == WindowPlacement.Fullscreen,
                     ) {
+                        remember { attachClassicSettingsStore() }
                         val keyboardSemanticsOwners = remember(window) {
                             DesktopSemanticsOwnersProvider(window)
                         }

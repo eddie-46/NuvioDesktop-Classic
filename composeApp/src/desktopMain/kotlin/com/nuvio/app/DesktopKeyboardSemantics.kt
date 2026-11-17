@@ -58,3 +58,16 @@ internal class DesktopSemanticsOwnersProvider(
         }
     }
 }
+
+/** Classic fork: gives the interface-size setting somewhere to save itself. */
+internal fun attachClassicSettingsStore() {
+    val store = com.nuvio.app.core.storage.DesktopStorage.store("nuvio_classic_settings")
+    com.nuvio.app.core.ui.ClassicUiScale.attach(
+        object : com.nuvio.app.core.ui.ClassicUiScale.Store {
+            override fun getString(key: String): String? = store.getString(key)
+            override fun putString(key: String, value: String) {
+                store.putString(key, value)
+            }
+        },
+    )
+}

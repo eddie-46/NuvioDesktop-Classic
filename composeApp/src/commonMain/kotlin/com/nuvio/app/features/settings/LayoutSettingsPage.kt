@@ -1,5 +1,16 @@
 package com.nuvio.app.features.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Slider
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import com.nuvio.app.core.ui.ClassicUiScale
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +88,18 @@ internal fun LazyListScope.layoutSettingsContent(
     onPosterCustomizationClick: () -> Unit,
     onHoverPreviewClick: () -> Unit,
 ) {
+    if (isDesktop) {
+        item {
+            SettingsSection(
+                title = "Interface size",
+                isTablet = isTablet,
+            ) {
+                SettingsGroup(isTablet = isTablet) {
+                    ClassicInterfaceSizeRow()
+                }
+            }
+        }
+    }
     item {
         SettingsSection(
             title = stringResource(Res.string.settings_appearance_section_home),
@@ -397,4 +420,52 @@ private fun NavBarStyleBottomSheet(
             }
         }
     }
+}
+
+
+/** Classic fork: interface size with - / + buttons (reliable from a keyboard) and a slider. */
+@Composable
+private fun ClassicInterfaceSizeRow() {
+    val percent = ClassicUiScale.percent
+    var draft by remember(percent) { mutableStateOf(percent.toFloat()) }
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "Size: ${draft.roundToInt()}%  (smaller numbers fit more on screen)",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ClassicSizeButton(label = "\u2212") { ClassicUiScale.set(percent - ClassicUiScale.STEP_PERCENT) }
+            Slider(
+                value = draft,
+                onValueChange = { draft = it },
+                onValueChangeFinished = { ClassicUiScale.set(draft.roundToInt()) },
+                valueRange = ClassicUiScale.MIN_PERCENT.toFloat()..ClassicUiScale.MAX_PERCENT.toFloat(),
+                modifier = Modifier.weight(1f),
+            )
+            ClassicSizeButton(label = "+") { ClassicUiScale.set(percent + ClassicUiScale.STEP_PERCENT) }
+            ClassicSizeButton(label = "Reset") { ClassicUiScale.set(ClassicUiScale.DEFAULT_PERCENT) }
+        }
+    }
+}
+
+@Composable
+private fun ClassicSizeButton(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
 }
