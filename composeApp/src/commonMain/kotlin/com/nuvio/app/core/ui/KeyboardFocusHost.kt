@@ -226,7 +226,17 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 }
                 return true
             }
-            if (direction == FocusDirection.Left) {
+            if (direction == FocusDirection.Left && !ClassicLayoutConfig.INLINE_SOURCES_LEFT_CLOSES_PANEL) {
+                // Leave the panel open and hand the selector back to the page: the item that
+                // opened the panel if it is still there, otherwise whatever is nearest on the left.
+                val back = panelFocus.returnRect
+                val returned = back != null &&
+                    runCatching { focusNearestTo(semanticsOwners(), back, outside = panel) }.getOrDefault(false)
+                if (!returned) {
+                    searchAndMove(direction, allowScroll = false)
+                }
+                debugLine = "dir=Left left the sources panel (panel stays open)"
+            } else if (direction == FocusDirection.Left) {
                 panelFocus.leftEdgePresses++
                 if (panelFocus.leftEdgePresses >= ClassicLayoutConfig.INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE) {
                     panelFocus.leftEdgePresses = 0
@@ -478,8 +488,10 @@ private fun focusFirstInside(owners: Collection<SemanticsOwner>, panel: Rect, fo
 }
 
 /** Puts the selector on the item whose centre is closest to where [box] was. */
-private fun focusNearestTo(owners: Collection<SemanticsOwner>, box: Rect): Boolean {
-    val target = visibleFocusTargets(owners).minByOrNull { (_, bounds) ->
+private fun focusNearestTo(owners: Collection<SemanticsOwner>, box: Rect, outside: Rect? = null): Boolean {
+    val target = visibleFocusTargets(owners)
+        .filter { (_, bounds) -> outside == null || !outside.contains(bounds.center) }
+        .minByOrNull { (_, bounds) ->
         (bounds.center - box.center).getDistance()
     } ?: return false
     return requestFocusOn(target.first)

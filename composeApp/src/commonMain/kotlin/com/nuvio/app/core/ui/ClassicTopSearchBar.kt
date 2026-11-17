@@ -67,7 +67,14 @@ internal object ClassicLayoutConfig {
     /** When the sources panel opens from the keyboard, move the selector into it. */
     const val INLINE_SOURCES_TAKE_FOCUS = true
 
+    /**
+     * Left at the panel's left edge: false moves the selector back to the page and keeps the
+     * panel open (Esc or the panel's back arrow closes it); true closes the panel.
+     */
+    const val INLINE_SOURCES_LEFT_CLOSES_PANEL = false
+
     /** Left presses at the panel's left edge needed to close it and return to the page. */
+    // Only used when INLINE_SOURCES_LEFT_CLOSES_PANEL is true.
     const val INLINE_SOURCES_LEFT_PRESSES_TO_CLOSE = 1
 
     /** Selecting a Continue Watching item opens its details page instead of the sources page. */
