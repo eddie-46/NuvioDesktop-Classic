@@ -54,6 +54,18 @@ internal object ClassicLayoutConfig {
 
     /** Opening the season dropdown puts the selector on the season you are in, not the top. */
     const val DETAILS_SEASON_DROPDOWN_FOCUS_CURRENT = true
+
+    /**
+     * Desktop library in the Stremio style: always a grid of everything (no rows with View All
+     * pages), one dropdown holding All / Movie / Series and then the custom playlists, and the
+     * sort options as tabs. Off brings back Nuvio's own rows/grid layouts.
+     */
+    const val LIBRARY_STREMIO_STYLE = true
+    const val LIBRARY_DROPDOWN_WIDTH_DP = 240
+    const val LIBRARY_DROPDOWN_MAX_HEIGHT_DP = 420
+
+    /** Heading shown above the custom playlists in the library dropdown. */
+    const val LIBRARY_PLAYLISTS_HEADER = "Playlists"
     /** Space kept clear above the column for the fullscreen button. */
     const val DETAILS_EPISODE_COLUMN_TOP_PADDING_DP = 96
     /** Darkening behind the column so the list reads over artwork (0 = none). */

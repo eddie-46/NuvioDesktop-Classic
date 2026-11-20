@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ViewAgenda
+import com.nuvio.app.core.ui.ClassicLayoutConfig
 import com.nuvio.app.core.ui.DisintegratingContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -146,6 +147,9 @@ fun LibraryScreen(
         LibraryDisplaySettingsRepository.ensureLoaded()
         LibraryDisplaySettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+    // Classic (Stremio-style) library: always the grid, with lists in one dropdown.
+    val classicLibrary = isDesktop && ClassicLayoutConfig.LIBRARY_STREMIO_STYLE
+    val layoutMode = if (classicLibrary) LibraryLayoutMode.VERTICAL else displaySettings.layoutMode
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var observedOfflineState by remember { mutableStateOf(false) }
     val serversUiState by remember {
@@ -181,14 +185,14 @@ fun LibraryScreen(
         sourceMode = uiState.sourceMode,
     )
     val orderListKeys = if (sourceMode != LibraryViewMode.Saved) emptyList() else {
-        if (displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) uiState.sections.map { it.type }
+        if (layoutMode == LibraryLayoutMode.HORIZONTAL) uiState.sections.map { it.type }
         else listOfNotNull(uiState.sections.firstOrNull { it.type == selectedLibrarySectionKey }?.type
             ?: uiState.sections.firstOrNull()?.type)
     }
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
     val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
-        if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
+        if (sourceMode == LibraryViewMode.Saved && layoutMode == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
                 sections = uiState.sections,
                 selected = visibleSortOption,
@@ -200,6 +204,7 @@ fun LibraryScreen(
         }
     }
     val verticalProjection = remember(
+        layoutMode,
         uiState.sections,
         uiState.sourceMode,
         selectedLibrarySectionKey,
@@ -208,7 +213,7 @@ fun LibraryScreen(
         sourceMode,
         providerOrders,
     ) {
-        if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
+        if (sourceMode == LibraryViewMode.Saved && layoutMode == LibraryLayoutMode.VERTICAL) {
             buildLibraryVerticalProjection(
                 sections = uiState.sections,
                 sourceMode = uiState.sourceMode,
@@ -283,7 +288,7 @@ fun LibraryScreen(
     val disintegration = remember { LibraryDisintegrationHolder() }
     val librarySectionsDisplay = if (
         sourceMode == LibraryViewMode.Saved &&
-        displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL &&
+        layoutMode == LibraryLayoutMode.HORIZONTAL &&
         uiState.isLoaded &&
         sortedSections.isNotEmpty()
     ) {
@@ -347,7 +352,9 @@ fun LibraryScreen(
                             actions = {
                                 if (sourceMode == LibraryViewMode.Saved) {
                                     LibraryListManagementButton()
-                                    val targetLayout = if (displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
+                                }
+                                if (sourceMode == LibraryViewMode.Saved && !classicLibrary) {
+                                    val targetLayout = if (layoutMode == LibraryLayoutMode.HORIZONTAL) {
                                         LibraryLayoutMode.VERTICAL
                                     } else {
                                         LibraryLayoutMode.HORIZONTAL
@@ -441,7 +448,7 @@ fun LibraryScreen(
             } else {
                 when {
                     !uiState.isLoaded || (uiState.isLoading && uiState.sections.isEmpty()) -> {
-                        if (displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
+                        if (layoutMode == LibraryLayoutMode.VERTICAL) {
                             libraryVerticalSkeletonItems(gridColumns)
                         } else {
                             items(3) {
@@ -500,24 +507,45 @@ fun LibraryScreen(
                     else -> {
                         item(
                             key = "library-saved-controls:${uiState.sourceMode}:" +
-                                "${displaySettings.layoutMode}:$effectiveSortOption",
+                                "${layoutMode}:" + (if (classicLibrary) "classic" else "$effectiveSortOption"),
                         ) {
-                            LibrarySavedControls(
-                                layoutMode = displaySettings.layoutMode,
-                                sourceMode = uiState.sourceMode,
-                                sortOption = effectiveSortOption,
-                                verticalProjection = verticalProjection,
-                                onSectionSelected = { sectionKey ->
-                                    selectedLibrarySectionKey = sectionKey
-                                    selectedLibraryType = null
-                                },
-                                onTypeSelected = { type -> selectedLibraryType = type },
-                                onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
-                                modifier = libraryContentTransitionModifier()
-                                    .padding(horizontal = 16.dp),
-                            )
+                            if (classicLibrary) {
+                                ClassicLibraryControls(
+                                    sections = uiState.sections,
+                                    sourceMode = uiState.sourceMode,
+                                    selectedSectionKey = verticalProjection.selectedSectionKey,
+                                    selectedType = verticalProjection.selectedType,
+                                    sortOption = effectiveSortOption,
+                                    onLibraryTypeSelected = { mainKey, type ->
+                                        selectedLibrarySectionKey = mainKey
+                                        selectedLibraryType = type
+                                    },
+                                    onPlaylistSelected = { sectionKey ->
+                                        selectedLibrarySectionKey = sectionKey
+                                        selectedLibraryType = null
+                                    },
+                                    onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                                    modifier = libraryContentTransitionModifier()
+                                        .padding(horizontal = 16.dp),
+                                )
+                            } else {
+                                LibrarySavedControls(
+                                    layoutMode = layoutMode,
+                                    sourceMode = uiState.sourceMode,
+                                    sortOption = effectiveSortOption,
+                                    verticalProjection = verticalProjection,
+                                    onSectionSelected = { sectionKey ->
+                                        selectedLibrarySectionKey = sectionKey
+                                        selectedLibraryType = null
+                                    },
+                                    onTypeSelected = { type -> selectedLibraryType = type },
+                                    onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                                    modifier = libraryContentTransitionModifier()
+                                        .padding(horizontal = 16.dp),
+                                )
+                            }
                         }
-                        when (displaySettings.layoutMode) {
+                        when (layoutMode) {
                             LibraryLayoutMode.HORIZONTAL -> librarySections(
                                 displaySections = librarySectionsDisplay,
                                 watchedKeys = watchedUiState.watchedKeys,
