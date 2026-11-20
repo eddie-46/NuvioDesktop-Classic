@@ -74,6 +74,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -2295,12 +2302,32 @@ private fun ClassicSeasonDropdown(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val width = ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_WIDTH_DP.dp
+    val headerFocus = remember { FocusRequester() }
+    val currentSeasonFocus = remember { FocusRequester() }
+    // Hand the selector back to the dropdown button once the list closes after being used.
+    var returnFocusToHeader by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (expanded && ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_FOCUS_CURRENT) {
+            // Wait a frame so the list is laid out, then put the selector on the current season.
+            delay(16)
+            runCatching { currentSeasonFocus.requestFocus() }
+        } else if (!expanded && returnFocusToHeader) {
+            returnFocusToHeader = false
+            delay(16)
+            runCatching { headerFocus.requestFocus() }
+        }
+    }
+    val closeList = {
+        returnFocusToHeader = true
+        expanded = false
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
             modifier = Modifier
                 .width(width)
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
+                .focusRequester(headerFocus)
                 .clickable(enabled = seasons.size > 1) { expanded = !expanded }
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2326,6 +2353,15 @@ private fun ClassicSeasonDropdown(
                     .heightIn(max = ClassicLayoutConfig.DETAILS_SEASON_DROPDOWN_MAX_HEIGHT_DP.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surface)
+                    .onPreviewKeyEvent { event ->
+                        // Esc closes the list without changing the season.
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                            closeList()
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .verticalScroll(rememberScrollState()),
             ) {
                 seasons.forEach { season ->
@@ -2343,8 +2379,9 @@ private fun ClassicSeasonDropdown(
                                     Color.Transparent
                                 },
                             )
+                            .then(if (selected) Modifier.focusRequester(currentSeasonFocus) else Modifier)
                             .clickable {
-                                expanded = false
+                                closeList()
                                 onSelect(season)
                             }
                             .padding(horizontal = 20.dp, vertical = 10.dp),
