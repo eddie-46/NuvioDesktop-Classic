@@ -58,6 +58,8 @@ internal fun ClassicLibraryControls(
     onLibraryTypeSelected: (mainSectionKey: String?, type: String?) -> Unit,
     onPlaylistSelected: (sectionKey: String) -> Unit,
     onSortSelected: (LibrarySortOption) -> Unit,
+    watchedFilter: ClassicWatchedFilter = ClassicWatchedFilter.ALL,
+    onWatchedFilterSelected: (ClassicWatchedFilter) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val mainSection = classicMainLibrarySection(sections, sourceMode)
@@ -117,21 +119,51 @@ internal fun ClassicLibraryControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             availableLibrarySortOptions(sourceMode).forEach { option ->
-                val selected = option == sortOption
-                Text(
+                ClassicLibraryTab(
                     text = classicSortLabel(option),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                        .clickable { onSortSelected(option) }
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                    selected = option == sortOption,
+                    onClick = { onSortSelected(option) },
                 )
+            }
+            if (ClassicLayoutConfig.LIBRARY_WATCHED_FILTER_ENABLED) {
+                // A thin divider: sort tabs on the left, the watched filters on the right.
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp)
+                        .width(1.dp)
+                        .heightIn(min = 24.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                listOf(ClassicWatchedFilter.WATCHED, ClassicWatchedFilter.NOT_WATCHED).forEach { filter ->
+                    val selected = watchedFilter == filter
+                    ClassicLibraryTab(
+                        text = if (filter == ClassicWatchedFilter.WATCHED) "Watched" else "Not watched",
+                        selected = selected,
+                        // Pressing the active filter again turns it off.
+                        onClick = { onWatchedFilterSelected(if (selected) ClassicWatchedFilter.ALL else filter) },
+                    )
+                }
             }
         }
     }
+}
+
+/** Library watched filter: everything, only watched, or only not watched. */
+enum class ClassicWatchedFilter { ALL, WATCHED, NOT_WATCHED }
+
+@Composable
+private fun ClassicLibraryTab(text: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+    )
 }
 
 private data class ClassicLibraryOption(

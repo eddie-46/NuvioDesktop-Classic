@@ -62,6 +62,9 @@ internal object ClassicLayoutConfig {
      */
     const val LIBRARY_STREMIO_STYLE = true
 
+    /** Watched / Not watched filter tabs after the sort tabs in the library. */
+    const val LIBRARY_WATCHED_FILTER_ENABLED = true
+
     /**
      * Library, category "See all" and collection-folder grids size their posters the same way
      * Search does, so they follow the interface size setting. Off brings back the 7-across cap.

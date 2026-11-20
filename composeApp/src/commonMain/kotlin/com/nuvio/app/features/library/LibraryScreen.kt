@@ -232,6 +232,24 @@ fun LibraryScreen(
             )
         }
     }
+    // Classic watched filter (Watched / Not watched tabs), applied on top of the list and type.
+    var classicWatchedFilterName by rememberSaveable { mutableStateOf(ClassicWatchedFilter.ALL.name) }
+    val classicWatchedFilter = runCatching { ClassicWatchedFilter.valueOf(classicWatchedFilterName) }
+        .getOrDefault(ClassicWatchedFilter.ALL)
+    val shownProjection = if (!classicLibrary || classicWatchedFilter == ClassicWatchedFilter.ALL) {
+        verticalProjection
+    } else {
+        val wantWatched = classicWatchedFilter == ClassicWatchedFilter.WATCHED
+        verticalProjection.copy(
+            entries = verticalProjection.entries.filter { entry ->
+                WatchingState.isPosterWatched(
+                    watchedKeys = watchedUiState.watchedKeys,
+                    item = entry.item.toMetaPreview(),
+                    fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                ) == wantWatched
+            },
+        )
+    }
     val retryLibraryLoad: () -> Unit = {
         NetworkStatusRepository.requestRefresh(force = true)
         coroutineScope.launch {
@@ -525,6 +543,8 @@ fun LibraryScreen(
                                         selectedLibraryType = null
                                     },
                                     onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                                    watchedFilter = classicWatchedFilter,
+                                    onWatchedFilterSelected = { classicWatchedFilterName = it.name },
                                     modifier = libraryContentTransitionModifier()
                                         .padding(horizontal = 16.dp),
                                 )
@@ -558,7 +578,7 @@ fun LibraryScreen(
                                 onDisintegrated = disintegration::onExited,
                             )
                             LibraryLayoutMode.VERTICAL -> libraryVerticalContent(
-                                projection = verticalProjection,
+                                projection = shownProjection,
                                 columns = gridColumns,
                                 watchedKeys = watchedUiState.watchedKeys,
                                 fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
