@@ -61,6 +61,12 @@ internal object ClassicLayoutConfig {
      * sort options as tabs. Off brings back Nuvio's own rows/grid layouts.
      */
     const val LIBRARY_STREMIO_STYLE = true
+
+    /**
+     * Library, category "See all" and collection-folder grids size their posters the same way
+     * Search does, so they follow the interface size setting. Off brings back the 7-across cap.
+     */
+    const val GRIDS_MATCH_SEARCH_SIZE = true
     const val LIBRARY_DROPDOWN_WIDTH_DP = 240
     const val LIBRARY_DROPDOWN_MAX_HEIGHT_DP = 420
 

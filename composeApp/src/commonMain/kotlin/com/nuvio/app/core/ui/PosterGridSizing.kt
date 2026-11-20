@@ -43,6 +43,15 @@ internal fun posterGridColumnCountForViewport(
     basePosterWidthDp: Int,
     useDesktopSizing: Boolean = isDesktop,
 ): Int {
+    // Classic: size grid posters like Search does (from the poster card width), so the
+    // interface size setting changes how many fit, instead of capping at 7 across.
+    if (useDesktopSizing && ClassicLayoutConfig.GRIDS_MATCH_SEARCH_SIZE) {
+        return posterGridColumnCountForCatalogWidth(
+            screenWidth = screenWidth,
+            basePosterWidthDp = basePosterWidthDp,
+            useDesktopSizing = true,
+        )
+    }
     val widthBreakpointColumns = posterGridColumnCountForWidth(screenWidth)
     val ultrawideProgress = ultrawideViewportProgress(
         widthDp = screenWidth.value,
