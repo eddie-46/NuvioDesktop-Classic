@@ -99,6 +99,27 @@ internal fun LazyListScope.layoutSettingsContent(
                 }
             }
         }
+        item {
+            SettingsSection(
+                title = "Description panel",
+                isTablet = isTablet,
+            ) {
+                SettingsGroup(isTablet = isTablet) {
+                    com.nuvio.app.features.home.components.ClassicPanelTab.entries.forEachIndexed { index, tab ->
+                        if (index > 0) SettingsGroupDivider(isTablet = isTablet)
+                        SettingsSwitchRow(
+                            title = "Show on ${tab.label}",
+                            description = "Details of the selected title in a panel on the right.",
+                            checked = com.nuvio.app.features.home.components.ClassicDescriptionPanel.isEnabled(tab),
+                            isTablet = isTablet,
+                            onCheckedChange = { value ->
+                                com.nuvio.app.features.home.components.ClassicDescriptionPanel.setEnabled(tab, value)
+                            },
+                        )
+                    }
+                }
+            }
+        }
     }
     item {
         SettingsSection(

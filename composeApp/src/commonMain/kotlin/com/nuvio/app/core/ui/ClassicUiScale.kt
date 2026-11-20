@@ -33,6 +33,7 @@ internal object ClassicUiScale {
     fun attach(newStore: Store) {
         store = newStore
         percent = newStore.getString(KEY)?.toIntOrNull()?.coerceIn(MIN_PERCENT, MAX_PERCENT) ?: DEFAULT_PERCENT
+        com.nuvio.app.features.home.components.ClassicDescriptionPanel.load(newStore)
     }
 
     fun set(newPercent: Int) {

@@ -27,6 +27,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import com.nuvio.app.features.home.components.ClassicDescriptionPanel
+import com.nuvio.app.features.home.components.ClassicDescriptionPanelView
+import com.nuvio.app.features.home.components.ClassicPanelTab
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -249,21 +255,49 @@ internal fun MainTabsDestination(
                     LocalNuvioBottomNavigationOverlayPadding provides if (useNativeBottomTabs) 49.dp else if (!isDesktop && !isTabletLayout && navBarStyleSetting != NavBarStyle.CLASSIC) 72.dp else 0.dp,
                     LocalNuvioNavBarScrollState provides navBarScrollState,
                 ) {
-                    AppTabHost(
-                        selectedTab = selectedTab,
-                        requests = requests,
-                        state = state.copy(
-                            tabsRouteActiveState = tabsRouteActiveState,
-                            topChromePadding = topChromePadding,
-                        ),
-                        actions = tabActions,
+                    // Classic: Stremio-style description panel beside Home, Search and Library.
+                    val panelTab = when (selectedTab) {
+                        AppScreenTab.Home -> ClassicPanelTab.HOME
+                        AppScreenTab.Search -> ClassicPanelTab.SEARCH
+                        AppScreenTab.Library -> ClassicPanelTab.LIBRARY
+                        else -> null
+                    }
+                    val showDescriptionPanel = isDesktop && useDesktopSidebar &&
+                        panelTab != null && ClassicDescriptionPanel.isEnabled(panelTab)
+                    LaunchedEffect(selectedTab) { ClassicDescriptionPanel.clear() }
+                    Row(
                         modifier = Modifier
                             .fillMaxSize()
                             .then(if (requiresNavBarHaze) Modifier.hazeSource(state = navBarHazeState) else Modifier)
                             .then(if (shouldAttachNestedScroll) Modifier.nestedScroll(navBarScrollState.nestedScrollConnection) else Modifier)
                             .padding(innerPadding)
                             .padding(start = contentStartPadding),
-                    )
+                    ) {
+                        AppTabHost(
+                            selectedTab = selectedTab,
+                            requests = requests,
+                            state = state.copy(
+                                tabsRouteActiveState = tabsRouteActiveState,
+                                topChromePadding = topChromePadding,
+                            ),
+                            actions = tabActions,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        )
+                        if (showDescriptionPanel) {
+                            ClassicDescriptionPanelView(
+                                modifier = Modifier
+                                    .width(ClassicLayoutConfig.DESCRIPTION_PANEL_WIDTH_DP.dp)
+                                    .fillMaxHeight()
+                                    .padding(
+                                        top = if (showClassicSearchBar) classicSearchBarHeight else 24.dp,
+                                        end = 16.dp,
+                                        bottom = 16.dp,
+                                    ),
+                            )
+                        }
+                    }
                 }
 
                 if (showClassicSearchBar) {

@@ -62,6 +62,18 @@ internal object ClassicLayoutConfig {
      */
     const val LIBRARY_STREMIO_STYLE = true
 
+    /**
+     * Stremio-style description panel on the right of Home, Search and Library, showing the
+     * poster that has the selector. Each tab can be turned off in Settings > Look > Layout.
+     */
+    const val DESCRIPTION_PANEL_ENABLED = true
+    const val DESCRIPTION_PANEL_WIDTH_DP = 420
+
+    /** Wait this long on a poster before loading its runtime, director and cast. */
+    const val DESCRIPTION_PANEL_DETAILS_DELAY_MS = 300L
+    const val DESCRIPTION_PANEL_MAX_DESCRIPTION_LINES = 8
+    const val DESCRIPTION_PANEL_MAX_CAST = 6
+
     /** Watched / Not watched filter tabs after the sort tabs in the library. */
     const val LIBRARY_WATCHED_FILTER_ENABLED = true
 

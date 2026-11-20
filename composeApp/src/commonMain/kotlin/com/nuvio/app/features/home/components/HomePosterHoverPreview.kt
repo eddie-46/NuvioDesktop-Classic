@@ -119,8 +119,10 @@ internal fun HomePosterHoverPreview(
     modifier: Modifier = Modifier,
     content: @Composable (Modifier) -> Unit,
 ) {
+    // Classic: the poster that gets the selector shows in the description panel.
+    val trackedModifier = if (isDesktop) modifier.classicDescriptionPanelTracker(item, onClick) else modifier
     if (!isDesktop) {
-        content(modifier)
+        content(trackedModifier)
         return
     }
 
@@ -128,12 +130,12 @@ internal fun HomePosterHoverPreview(
     val trailerPlaybackEnabled = AppFeaturePolicy.trailerPlaybackMode == TrailerPlaybackMode.IN_APP &&
         posterCardStyle.hoverPreviewTrailerEnabled
     if (!posterCardStyle.hoverPreviewEnabled) {
-        content(modifier)
+        content(trackedModifier)
         return
     }
 
     if (PosterZoomOverlayCoordinator.isVisible) {
-        content(modifier)
+        content(trackedModifier)
         return
     }
 
@@ -278,7 +280,7 @@ internal fun HomePosterHoverPreview(
         }
     }
 
-    Box(modifier = modifier) {
+    Box(modifier = trackedModifier) {
         content(Modifier.hoverable(anchorInteractionSource))
 
         if (popupMounted) {
