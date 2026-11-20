@@ -88,6 +88,25 @@ internal object KeyboardNavigationConfig {
     /** Left/Right stay inside a sideways row until the row has been scrolled to its end. */
     const val ROWS_KEEP_HORIZONTAL_ARROWS = true
 
+    /**
+     * Up/Down inside a list that can still scroll that way (the episode list, for one) stay in
+     * the list: the next item is scrolled into view instead of jumping to whatever sits above
+     * or below the list. Once the list reaches its end, the arrows leave it as normal.
+     */
+    const val LISTS_KEEP_VERTICAL_ARROWS = true
+
+    /** Inside a locked list, scroll about one item's height per press instead of a big page. */
+    const val LIST_SCROLL_ONE_ITEM = true
+
+    /** Extra pixels added to the one-item scroll so the next item clears the list edge. */
+    const val LIST_SCROLL_EXTRA_PX = 24f
+
+    /**
+     * After a scroll, look for the newly revealed item every this many milliseconds (up to
+     * [SCROLL_SETTLE_MS]) so the selector lands as soon as the item appears.
+     */
+    const val SCROLL_POLL_MS = 60L
+
     /** Share of the surrounding list scrolled by one arrow press in that case. */
     const val SCROLL_STEP_FRACTION = 0.6f
 
@@ -207,6 +226,24 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         "dir=$direction how=$how moved=$moved targets=${outcome.targets} " +
             "layers=${outcome.layers} from=${describeRect(outcome.from)} to=${describeRect(outcome.to)}"
 
+    /** After a scroll, land on the revealed item as soon as it shows up. */
+    fun landAfterScroll(direction: FocusDirection, within: Rect?, label: String) {
+        retryHolder.job = scope.launch {
+            var waited = 0L
+            while (waited < KeyboardNavigationConfig.SCROLL_SETTLE_MS) {
+                val wait = KeyboardNavigationConfig.SCROLL_POLL_MS
+                    .coerceAtMost(KeyboardNavigationConfig.SCROLL_SETTLE_MS - waited)
+                delay(wait)
+                waited += wait
+                val retry = searchAndMove(direction, allowScroll = false, within = within)
+                if (retry.moved) {
+                    debugLine = describeOutcome(direction, retry, "$label-then-${retry.how}", true)
+                    return@launch
+                }
+            }
+        }
+    }
+
     fun moveWithArrows(direction: FocusDirection): Boolean {
         retryHolder.job?.cancel()
         panelFocus.userMoved = true
@@ -224,12 +261,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
             if (inside.moved) {
                 panelFocus.leftEdgePresses = 0
                 debugLine = describeOutcome(direction, inside, "panel-${inside.how}", true)
-                if (inside.scrolled) {
-                    retryHolder.job = scope.launch {
-                        delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
-                        searchAndMove(direction, allowScroll = false, within = panel)
-                    }
-                }
+                if (inside.scrolled) landAfterScroll(direction, panel, "panel-scrolled")
                 return true
             }
             if (direction == FocusDirection.Left && !ClassicLayoutConfig.INLINE_SOURCES_LEFT_CLOSES_PANEL) {
@@ -282,12 +314,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
                 within = column,
             )
             debugLine = describeOutcome(direction, inside, "column-${inside.how}", inside.moved)
-            if (inside.scrolled) {
-                retryHolder.job = scope.launch {
-                    delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
-                    searchAndMove(direction, allowScroll = false, within = column)
-                }
-            }
+            if (inside.scrolled) landAfterScroll(direction, column, "column-scrolled")
             return true
         }
 
@@ -301,11 +328,7 @@ internal fun KeyboardFocusHost(content: @Composable () -> Unit) {
         debugLine = describeOutcome(direction, outcome, how, moved)
         if (outcome.scrolled) {
             // The next row was out of view: once the scroll settles, land on it.
-            retryHolder.job = scope.launch {
-                delay(KeyboardNavigationConfig.SCROLL_SETTLE_MS)
-                val retry = searchAndMove(direction, allowScroll = false)
-                debugLine = describeOutcome(direction, retry, "scrolled-then-${retry.how}", retry.moved)
-            }
+            landAfterScroll(direction, null, "scrolled")
         }
         return moved
     }
@@ -621,7 +644,13 @@ private fun moveFocusBySemantics(
     // A sideways row that can still scroll keeps Left/Right to itself: move along the row, or
     // scroll it, and only hand over to whatever sits beside the row once it has reached its end.
     val horizontal = direction == FocusDirection.Left || direction == FocusDirection.Right
-    val rowArea: ScrollArea? = if (KeyboardNavigationConfig.ROWS_KEEP_HORIZONTAL_ARROWS && horizontal && liveSource != null) {
+    val lockThisWay = if (horizontal) {
+        KeyboardNavigationConfig.ROWS_KEEP_HORIZONTAL_ARROWS
+    } else {
+        KeyboardNavigationConfig.LISTS_KEEP_VERTICAL_ARROWS
+    }
+    // Same idea for Up/Down in a list: stay in it while it can still scroll that way.
+    val rowArea: ScrollArea? = if (lockThisWay && liveSource != null) {
         scrollAreas
             .filter { area ->
                 area.layer == activeLayer &&
@@ -673,7 +702,12 @@ private fun moveFocusBySemantics(
                 it.layer == activeLayer && (within == null || within.contains(it.bounds.center))
             }
         }
-        if (scrollTowards(areas, liveSource, direction)) {
+        val step = if (rowArea != null && !horizontal && KeyboardNavigationConfig.LIST_SCROLL_ONE_ITEM) {
+            liveSource.height + KeyboardNavigationConfig.LIST_SCROLL_EXTRA_PX
+        } else {
+            null
+        }
+        if (scrollTowards(areas, liveSource, direction, step)) {
             return SemanticsMoveOutcome(
                 moved = true,
                 how = "scrolled",
@@ -758,15 +792,21 @@ private fun canScroll(area: ScrollArea, direction: FocusDirection): Boolean {
     return if (towardsEnd) value < range.maxValue() else value > 0f
 }
 
-private fun scrollTowards(areas: List<ScrollArea>, source: Rect, direction: FocusDirection): Boolean {
+private fun scrollTowards(
+    areas: List<ScrollArea>,
+    source: Rect,
+    direction: FocusDirection,
+    stepOverride: Float? = null,
+): Boolean {
     val vertical = direction == FocusDirection.Down || direction == FocusDirection.Up
     val usable = areas.filter { canScroll(it, direction) }
     if (usable.isEmpty()) return false
     val around = usable.filter { it.bounds.overlaps(source) }
     val chosen = (around.ifEmpty { usable }).minByOrNull { it.bounds.width * it.bounds.height } ?: return false
     val scrollBy = chosen.node.config.getOrNull(SemanticsActions.ScrollBy)?.action ?: return false
-    val step = (if (vertical) chosen.bounds.height else chosen.bounds.width) *
+    val pageStep = (if (vertical) chosen.bounds.height else chosen.bounds.width) *
         KeyboardNavigationConfig.SCROLL_STEP_FRACTION
+    val step = stepOverride?.coerceAtMost(pageStep) ?: pageStep
     return when (direction) {
         FocusDirection.Down -> scrollBy(0f, step)
         FocusDirection.Up -> scrollBy(0f, -step)
